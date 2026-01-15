@@ -1,0 +1,202 @@
+﻿@* 
+   ============================================================================
+   ViewPdf.razor - PDF Viewer Component for Document Viewer Application
+   ============================================================================
+   
+   Purpose: Displays a PDF document in an iframe for viewing. This component 
+   fetches the document metadata from the database and ensures the document is 
+   of type "PDF" before rendering the viewer. If the document is not found or 
+   is not a PDF, appropriate messages are displayed.
+   
+   Created: [Date]
+   Last Updated: [Date]
+   
+   Dependencies:
+   - DocumentRepository: Handles database interactions for fetching document metadata.
+   - Document: Represents the document model with metadata properties.
+   - LayoutSelector: Provides layout selection for the component.
+   - Bootstrap 5.x for styling.
+*@
+
+@page "/viewpdf/{Database}/{DocumentId:int}"
+@* Defines the route for this page with database and document ID parameters *@
+
+@using DV.Shared.Models
+@using DV.Web.Services
+@using DV.Shared.Security
+@using DV.Web.Components.Layout
+@using DV.Web.Components.Documents
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Authorization
+@* Imports the necessary models, services, and security components *@
+
+@layout MinimalLayout
+@* Use MinimalLayout to avoid double headers since LayoutSelector is used below *@
+
+@inject DocumentRepository Repo
+@inject UserService UserService
+@inject UserProjectAccessService UserProjectAccessService
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@* Injects the services for database operations, user management, and authentication *@
+
+@attribute [Authorize]
+@rendermode InteractiveServer
+@* Enforces authorization policy and sets the render mode to InteractiveServer *@
+
+<PageTitle>PDF Viewer</PageTitle> @* Sets the page title to "PDF Viewer" *@
+
+<LayoutSelector>
+    @if (isLoading)
+    {
+        <div class="d-flex justify-content-center my-3">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+        </div>
+    }
+    else if (!string.IsNullOrEmpty(accessError))
+    {
+        <div class="alert alert-danger">
+            <i class="bi bi-exclamation-triangle me-2"></i>
+            <strong>Access Denied</strong>
+            <p class="mb-0">@accessError</p>
+        </div>
+    }
+    else if (doc is null)
+    {
+        <div class="alert alert-warning">
+            <i class="bi bi-file-x me-2"></i>
+            <strong>Document Not Found</strong>
+            <p class="mb-0">The requested PDF document could not be found.</p>
+        </div>
+    }
+    else if (!string.Equals(doc.DocumentType, "PDF", StringComparison.OrdinalIgnoreCase))
+    {
+        <div class="alert alert-warning">
+            <i class="bi bi-file-earmark me-2"></i>
+            <strong>Invalid Document Type</strong>
+            <p class="mb-0">This document is not a PDF.</p>
+        </div>
+    }
+    else
+    {
+        @* =================================================================
+          Document Display
+          =================================================================
+          Purpose: Displays the PDF document in an iframe or shows BLOB viewer.
+        *@
+        <div class="card-body p-0">
+            <div style="height: calc(100vh - 200px);">
+                @if (doc.DocumentType!.Equals("PDF", StringComparison.OrdinalIgnoreCase))
+                {
+                    @* Check if this document uses BLOB storage *@
+                    @if (pages != null && pages.Any() && pages.First().UsesBlobStorage)
+                    {
+                        @* Use BLOB-based viewer for BLOB documents *@
+                        <BlobDocumentViewer DocumentId="@DocumentId" Database="@Database" />
+                    }
+                    else
+                    {
+                        @* Use traditional iframe for file-based PDFs *@
+                        <iframe src="@($"/api/pdf-view/{Database}/{DocumentId}")" 
+                                width="100%" 
+                                height="100%" 
+                                frameborder="0">
+                            Your browser does not support PDFs. 
+                            <a href="@($"/api/pdf-view/{Database}/{DocumentId}")" target="_blank">Download the PDF</a>
+                        </iframe>
+                    }
+                }
+                else
+                {
+                    <div class="alert alert-warning m-3">
+                        <i class="bi bi-file-earmark me-2"></i>
+                        <strong>Unsupported Document Type</strong>
+                        <p class="mb-0">This document is not a PDF and cannot be displayed in the PDF viewer.</p>
+                    </div>
+                }
+            </div>
+        </div>
+    }
+</LayoutSelector>
+
+@* ============================================================================
+   Code-Behind Logic for the ViewPdf Page
+   ============================================================================ *@
+@code {
+    [Parameter] public string Database { get; set; } = "DefaultConnection"; @* Database parameter with a default value *@
+    [Parameter] public int DocumentId { get; set; } @* Document ID parameter *@
+    Document? doc; @* Holds the document metadata *@
+    List<DocumentPage>? pages; @* Holds the document pages to check storage type *@
+
+    private string? currentUsername;
+    private ApplicationUser? currentUser;
+    private bool isLoading = true;
+    private string? accessError;
+
+    @* ========================================================================
+       OnParametersSetAsync
+       ========================================================================
+       Purpose: Fetches the document metadata from the database when the 
+       parameters (Database and DocumentId) are set.
+    *@
+    protected override async Task OnParametersSetAsync()
+    {
+        isLoading = true;
+        accessError = null;
+        
+        try
+        {
+            // Get current user
+            var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+            currentUsername = authState.User.Identity?.Name;
+
+            if (string.IsNullOrEmpty(currentUsername))
+            {
+                accessError = "You must be authenticated to view documents.";
+                return;
+            }
+
+            currentUser = await UserService.GetUserByUsernameAsync(currentUsername);
+            if (currentUser == null)
+            {
+                accessError = "User not found in the system.";
+                return;
+            }
+
+            // First, fetch the document to get the project ID
+            doc = await Repo.GetDocumentAsync(Database, DocumentId);
+            if (doc == null)
+            {
+                // Document not found - this will be handled by the UI
+                return;
+            }
+
+            // Load document pages to check storage type
+            pages = await Repo.GetDocumentPagesAsync(Database, DocumentId);
+
+            // Check if user is a global admin
+            var userRoles = await UserService.GetUserRolesAsync(currentUser.UserId);
+            var isGlobalAdmin = userRoles.Any(r => r.Name == "Admin");
+
+            if (!isGlobalAdmin)
+            {
+                // For non-admin users, validate project access
+                if (!doc.ProjectId.HasValue || !await UserProjectAccessService.UserHasProjectAccessAsync(currentUser.UserId, doc.ProjectId.Value))
+                {
+                    accessError = "You do not have permission to view documents from this project. Please contact your administrator for access.";
+                    return;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Error loading PDF document: {ex.Message}");
+            accessError = "An error occurred while loading the document. Please try again.";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+}

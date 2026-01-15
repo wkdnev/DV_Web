@@ -1,0 +1,77 @@
+﻿@page "/access-denied"
+@using Microsoft.AspNetCore.Components.Authorization
+@inject AuthenticationStateProvider AuthenticationStateProvider
+
+<PageTitle>Access Denied</PageTitle>
+
+<div class="container mt-5">
+    <div class="row justify-content-center">
+        <div class="col-md-8">
+            <div class="card border-danger">
+                <div class="card-header bg-danger text-white">
+                    <h4 class="mb-0"><i class="bi bi-exclamation-triangle-fill me-2"></i>Access Denied (403 Forbidden)</h4>
+                </div>
+                <div class="card-body">
+                    @if (username != null)
+                    {
+                        <h5>Hello, @username</h5>
+                        <p class="lead mt-3">
+                            You are authenticated, but you don't have permission to access this resource.
+                        </p>
+                        <div class="alert alert-info mt-3">
+                            <h6><i class="bi bi-info-circle me-2"></i>What's happening?</h6>
+                            <p>
+                                Your account is recognized, but it hasn't been granted the necessary permissions.
+                                This could be because:
+                            </p>
+                            <ul>
+                                <li>Your account has not been assigned to any roles in the system</li>
+                                <li>Your assigned roles don't have the required permissions</li>
+                                <li>This specific area requires additional authorization</li>
+                            </ul>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="alert alert-warning">
+                            <h5><i class="bi bi-exclamation-circle me-2"></i>Authentication Problem</h5>
+                            <p>
+                                You aren't currently authenticated. This could be because:
+                            </p>
+                            <ul>
+                                <li>Your authentication token has expired</li>
+                                <li>There's an issue with your Windows authentication</li>
+                                <li>Your browser isn't passing authentication credentials</li>
+                            </ul>
+                        </div>
+                    }
+
+                    <div class="mt-4">
+                        <h6>Technical Details:</h6>
+                        <ul>
+                            <li><strong>Username:</strong> @(username ?? "Not authenticated")</li>
+                            <li><strong>Authentication Method:</strong> Windows Authentication</li>
+                            <li><strong>Error Code:</strong> 403 Forbidden</li>
+                            <li><strong>Time:</strong> @DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss")</li>
+                        </ul>
+                    </div>
+
+                    <div class="mt-4">
+                        <a href="/" class="btn btn-primary me-2">Go to Home Page</a>
+                        <a href="/login" class="btn btn-outline-secondary">Check Authentication Status</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private string? username;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        username = authState.User.Identity?.Name;
+    }
+}

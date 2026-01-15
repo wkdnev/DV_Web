@@ -1,0 +1,63 @@
+@page "/test-icons"
+@attribute [AllowAnonymous]
+
+<PageTitle>Icon Test</PageTitle>
+
+<div style="padding: 2rem; background: white;">
+    <h1>Icon Component Test</h1>
+    
+    <div style="margin: 2rem 0; padding: 1rem; background: #f8fafc; border: 2px solid #3b82f6;">
+        <h2>Test 1: Basic Icon</h2>
+        <p>Tool icon (28px): <Icon Name="tool" Size="28" /></p>
+        <p>Info icon (24px, blue): <Icon Name="info" Size="24" Color="#3b82f6" /></p>
+    </div>
+    
+    <div style="margin: 2rem 0; padding: 1rem; background: #f8fafc; border: 2px solid #10b981;">
+        <h2>Test 2: All Icons</h2>
+        <div style="display: grid; grid-template-columns: repeat(6, 1fr); gap: 1rem;">
+            <div><Icon Name="clipboard" Size="24" /> clipboard</div>
+            <div><Icon Name="lock" Size="24" /> lock</div>
+            <div><Icon Name="key" Size="24" /> key</div>
+            <div><Icon Name="search" Size="24" /> search</div>
+            <div><Icon Name="plus" Size="24" /> plus</div>
+            <div><Icon Name="edit" Size="24" /> edit</div>
+            <div><Icon Name="trash" Size="24" /> trash</div>
+            <div><Icon Name="save" Size="24" /> save</div>
+            <div><Icon Name="x" Size="24" /> x</div>
+            <div><Icon Name="check" Size="24" /> check</div>
+            <div><Icon Name="refresh" Size="24" /> refresh</div>
+            <div><Icon Name="clock" Size="24" /> clock</div>
+            <div><Icon Name="alert" Size="24" Color="#f59e0b" /> alert</div>
+            <div><Icon Name="info" Size="24" Color="#3b82f6" /> info</div>
+            <div><Icon Name="power" Size="24" /> power</div>
+            <div><Icon Name="users" Size="24" /> users</div>
+            <div><Icon Name="calendar" Size="24" /> calendar</div>
+            <div><Icon Name="timer" Size="24" /> timer</div>
+            <div><Icon Name="award" Size="24" /> award</div>
+            <div><Icon Name="package" Size="24" /> package</div>
+            <div><Icon Name="cloud" Size="24" /> cloud</div>
+            <div><Icon Name="folder" Size="24" /> folder</div>
+            <div><Icon Name="tool" Size="24" /> tool</div>
+            <div><Icon Name="database" Size="24" /> database</div>
+            <div><Icon Name="settings" Size="24" /> settings</div>
+            <div><Icon Name="link" Size="24" /> link</div>
+            <div><Icon Name="file" Size="24" /> file</div>
+            <div><Icon Name="shield" Size="24" /> shield</div>
+            <div><Icon Name="eye" Size="24" /> eye</div>
+            <div><Icon Name="ban" Size="24" /> ban</div>
+        </div>
+    </div>
+    
+    <div style="margin: 2rem 0; padding: 1rem; background: #fee2e2; border: 2px solid #ef4444;">
+        <h2>Test 3: Invalid Icon (should show [?])</h2>
+        <p>Invalid: <Icon Name="invalid-icon-name" Size="24" /></p>
+    </div>
+    
+    <div style="margin: 2rem 0; padding: 1rem; background: #e0e7ff; border: 2px solid #6366f1;">
+        <h2>Test 4: In Flex Container</h2>
+        <div style="display: flex; align-items: center; gap: 0.5rem;">
+            <Icon Name="tool" Size="28" />
+            <span style="font-size: 1.5rem; font-weight: bold;">System Diagnostics</span>
+        </div>
+    </div>
+</div>

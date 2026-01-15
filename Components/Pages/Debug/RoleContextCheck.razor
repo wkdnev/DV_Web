@@ -1,0 +1,241 @@
+﻿#if DEBUG
+@page "/debug/role-context-check"
+@using DV.Web.Services
+@using DV.Shared.Security
+@inject RoleContextService RoleContext
+@inject NavigationManager Navigation
+@inject IJSRuntime JSRuntime
+@rendermode InteractiveServer
+
+<PageTitle>Role Context Check</PageTitle>
+
+<div class="container mt-4">
+    <div class="card">
+        <div class="card-header bg-info text-white">
+            <h4 class="mb-0">Role Context Check</h4>
+            <small>Check what the RoleContextService thinks about your current role</small>
+        </div>
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-6">
+                    <h5>Current Role Context</h5>
+                    <table class="table table-striped">
+                        <tr>
+                            <td><strong>Current Username:</strong></td>
+                            <td><code>@(RoleContext.CurrentUsername ?? "NULL")</code></td>
+                        </tr>
+                        <tr>
+                            <td><strong>Current Role:</strong></td>
+                            <td>
+                                @if (RoleContext.CurrentRole != null)
+                                {
+                                    <span class="badge bg-success">@RoleContext.CurrentRole.Name</span>
+                                }
+                                else
+                                {
+                                    <span class="badge bg-danger">NULL - No role selected!</span>
+                                }
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><strong>Has Multiple Roles:</strong></td>
+                            <td>
+                                <span class="badge @(RoleContext.HasMultipleRoles ? "bg-warning" : "bg-info")">
+                                    @(RoleContext.HasMultipleRoles ? "Yes" : "No")
+                                </span>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><strong>Available Roles Count:</strong></td>
+                            <td><span class="badge bg-primary">@RoleContext.UserRoles.Count</span></td>
+                        </tr>
+                    </table>
+                </div>
+                
+                <div class="col-md-6">
+                    <h5>Available Roles</h5>
+                    @if (RoleContext.UserRoles.Any())
+                    {
+                        <ul class="list-group">
+                            @foreach (var role in RoleContext.UserRoles)
+                            {
+                                <li class="list-group-item d-flex justify-content-between align-items-center">
+                                    <div>
+                                        <strong>@role.Name</strong>
+                                        <br/><small class="text-muted">@role.Description</small>
+                                    </div>
+                                    <span class="badge bg-secondary">ID: @role.RoleId</span>
+                                </li>
+                            }
+                        </ul>
+                    }
+                    else
+                    {
+                        <div class="alert alert-warning">No roles available in RoleContext!</div>
+                    }
+                </div>
+            </div>
+            
+            <div class="row mt-4">
+                <div class="col-12">
+                    <h5>Role-Based Route Access Test</h5>
+                    <table class="table table-sm">
+                        <thead>
+                            <tr>
+                                <th>Route</th>
+                                <th>Can Access</th>
+                                <th>Reason</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td><code>/admin</code></td>
+                                <td>
+                                    @if (RoleContext.CanAccessRoute("/admin"))
+                                    {
+                                        <span class="badge bg-success">Yes</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge bg-danger">No</span>
+                                    }
+                                </td>
+                                <td>
+                                    @if (RoleContext.CurrentRole == null)
+                                    {
+                                        <span class="text-danger">No current role selected</span>
+                                    }
+                                    else if (RoleContext.IsCurrentRole("Admin"))
+                                    {
+                                        <span class="text-success">Admin role is active</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="text-warning">Current role is '@RoleContext.CurrentRole.Name', not Admin</span>
+                                    }
+                                </td>
+                            </tr>
+                            <tr>
+                                <td><code>/auditor/dashboard</code></td>
+                                <td>
+                                    @if (RoleContext.CanAccessRoute("/auditor/dashboard"))
+                                    {
+                                        <span class="badge bg-success">Yes</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge bg-danger">No</span>
+                                    }
+                                </td>
+                                <td>
+                                    @if (RoleContext.CurrentRole == null)
+                                    {
+                                        <span class="text-danger">No current role selected</span>
+                                    }
+                                    else if (RoleContext.IsCurrentRole("Auditor"))
+                                    {
+                                        <span class="text-success">Auditor role is active</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="text-warning">Current role is '@RoleContext.CurrentRole.Name', not Auditor</span>
+                                    }
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            
+            @if (RoleContext.HasMultipleRoles && RoleContext.CurrentRole == null)
+            {
+                <div class="alert alert-warning mt-4">
+                    <h6><i class="bi bi-exclamation-triangle me-2"></i>Action Required</h6>
+                    <p class="mb-2">You have multiple roles but no current role is selected. You need to select a role before accessing protected pages.</p>
+                    <button class="btn btn-primary" @onclick="GoToRoleSelection">
+                        <i class="bi bi-person-badge me-1"></i>
+                        Select Your Role
+                    </button>
+                </div>
+            }
+            
+            @if (RoleContext.CurrentRole != null)
+            {
+                <div class="alert alert-info mt-4">
+                    <h6><i class="bi bi-info-circle me-2"></i>Current Status</h6>
+                    <p class="mb-2">You are currently operating as: <strong>@RoleContext.CurrentRole.Name</strong></p>
+                    @if (RoleContext.IsCurrentRole("Admin"))
+                    {
+                        <button class="btn btn-success" @onclick="GoToAdminDashboard">
+                            <i class="bi bi-gear me-1"></i>
+                            Access Admin Dashboard
+                        </button>
+                    }
+                    @if (RoleContext.HasMultipleRoles)
+                    {
+                        <button class="btn btn-secondary ms-2" @onclick="GoToRoleSelection">
+                            <i class="bi bi-arrow-repeat me-1"></i>
+                            Switch Role
+                        </button>
+                    }
+                </div>
+            }
+            
+            <div class="mt-4">
+                <button class="btn btn-outline-primary me-2" @onclick="RefreshContext">
+                    <i class="bi bi-arrow-clockwise me-1"></i>
+                    Refresh Context
+                </button>
+                <button class="btn btn-outline-secondary" @onclick="LogToConsole">
+                    <i class="bi bi-terminal me-1"></i>
+                    Log to Console
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    protected override async Task OnInitializedAsync()
+    {
+        // Initialize the role context if needed
+        if (RoleContext.CurrentRole == null && RoleContext.UserRoles.Count == 0)
+        {
+            await RoleContext.InitializeAsync();
+        }
+    }
+    
+    private async Task RefreshContext()
+    {
+        await RoleContext.InitializeAsync();
+        StateHasChanged();
+    }
+    
+    private void GoToRoleSelection()
+    {
+        Navigation.NavigateTo("/select-role");
+    }
+    
+    private void GoToAdminDashboard()
+    {
+        Navigation.NavigateTo("/admin");
+    }
+    
+    private async Task LogToConsole()
+    {
+        await JSRuntime.InvokeVoidAsync("console.log", "=== ROLE CONTEXT CHECK ===");
+        await JSRuntime.InvokeVoidAsync("console.log", $"Current Username: {RoleContext.CurrentUsername}");
+        await JSRuntime.InvokeVoidAsync("console.log", $"Current Role: {RoleContext.CurrentRole?.Name ?? "NULL"}");
+        await JSRuntime.InvokeVoidAsync("console.log", $"Has Multiple Roles: {RoleContext.HasMultipleRoles}");
+        await JSRuntime.InvokeVoidAsync("console.log", $"Available Roles Count: {RoleContext.UserRoles.Count}");
+        
+        foreach (var role in RoleContext.UserRoles)
+        {
+            await JSRuntime.InvokeVoidAsync("console.log", $"Available Role: {role.Name} (ID: {role.RoleId})");
+        }
+        
+        await JSRuntime.InvokeVoidAsync("console.log", $"Can access /admin: {RoleContext.CanAccessRoute("/admin")}");
+        await JSRuntime.InvokeVoidAsync("console.log", "=== END ROLE CONTEXT CHECK ===");
+    }
+}
+#endif

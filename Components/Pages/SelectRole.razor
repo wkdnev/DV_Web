@@ -1,0 +1,479 @@
+﻿@* ============================================================================
+   StartupRoleSelector.razor - Initial Role Selection Component
+   ============================================================================
+   
+   Purpose: Displays a role selection interface for users with multiple roles
+   when they first login or when no active role is set. This component forces
+   users to choose their operating role before proceeding to the application.
+   
+   Created: [Date]
+   Last Updated: [Date]
+   
+   Dependencies:
+   - DV.Web.Services.RoleContextService: For role context management
+   - DV.Shared.Security: For role models
+   
+   Notes:
+   - Displays as a modal overlay until role is selected
+   - Provides role descriptions and dashboard previews
+   - Automatically navigates to selected role's dashboard
+   ============================================================================ *@
+
+@page "/select-role"
+@using DV.Web.Services
+@using DV.Shared.Security
+@inject RoleContextService RoleContext
+@inject NavigationManager Navigation
+@inject IJSRuntime JSRuntime
+@inject IServiceProvider ServiceProvider
+@rendermode InteractiveServer
+
+<PageTitle>Select Your Role</PageTitle>
+
+<div style="min-height: 100vh; background: #f8fafc; display: flex; align-items: flex-start; justify-content: center; padding-top: 100px; padding-left: 1.5rem; padding-right: 1.5rem; padding-bottom: 1.5rem;">
+    <div style="max-width: 900px; width: 100%;">
+        <div class="lgreeny-panel" style="box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);">
+            <div style="padding: 1.5rem; background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%); border-radius: 0.5rem 0.5rem 0 0; text-align: center; color: white;">
+                <h2 style="margin: 0 0 0.25rem 0; font-size: 1.5rem; font-weight: 600;">
+                    ðŸŽ­ Welcome to Document Viewer
+                </h2>
+                <p style="margin: 0; font-size: 0.875rem; opacity: 0.95;">Please select your operating role to continue</p>
+            </div>
+            <div style="padding: 1.5rem;">
+                        @* DEBUG SECTION - Only show for AIPC\neilr *@
+                        @if (RoleContext.CurrentUsername?.Equals("AIPC\\neilr", StringComparison.OrdinalIgnoreCase) == true)
+                        {
+                            <div style="padding: 0.75rem; background: #dbeafe; border: 1px solid #bfdbfe; border-radius: 0.375rem; margin-bottom: 1rem; color: #1e40af;">
+                                <h6 style="margin: 0 0 0.5rem 0; font-weight: 600; font-size: 0.875rem;">ðŸ› Debug Information for AIPC\neilr</h6>
+                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; margin-bottom: 0.5rem;">
+                                    <div>
+                                        <strong style="font-size: 0.75rem;">RoleContext Roles:</strong>
+                                        <ul style="margin: 0.25rem 0; padding-left: 1.25rem; font-size: 0.75rem;">
+                                            @foreach (var role in RoleContext.UserRoles)
+                                            {
+                                                <li>@role.Name (ID: @role.RoleId)</li>
+                                            }
+                                        </ul>
+                                    </div>
+                                    <div>
+                                        <strong style="font-size: 0.75rem;">Database Roles:</strong>
+                                        <ul style="margin: 0.25rem 0; padding-left: 1.25rem; font-size: 0.75rem;">
+                                            @foreach (var role in debugDatabaseRoles)
+                                            {
+                                                <li>@role.Name (ID: @role.RoleId)</li>
+                                            }
+                                        </ul>
+                                    </div>
+                                </div>
+                                @if (!string.IsNullOrEmpty(debugMessage))
+                                {
+                                    <div style="margin-top: 0.5rem; padding: 0.5rem; background: white; border-radius: 0.25rem; font-size: 0.75rem;">
+                                        <strong>Debug Message:</strong> @debugMessage
+                                    </div>
+                                }
+                                <div style="margin-top: 0.5rem;">
+                                    <button class="lgreeny-btn-secondary" style="padding: 0.375rem 0.75rem; font-size: 0.75rem;" @onclick="RefreshRoles">
+                                        ðŸ”„ Refresh Roles
+                                    </button>
+                                </div>
+                            </div>
+                        }
+                        
+                        @if (!isLoading && RoleContext.UserRoles.Any())
+                        {
+                            <p style="text-align: center; color: #64748b; font-size: 0.875rem; margin-bottom: 1.5rem;">
+                                You have been assigned multiple roles. Choose the role you want to operate under:
+                            </p>
+                            
+                            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 1.5rem;">
+                                @foreach (var role in RoleContext.UserRoles)
+                                {
+                                    <button type="button" 
+                                            style="background: white; border: 2px solid #e2e8f0; border-radius: 0.5rem; padding: 1.25rem; cursor: pointer; transition: all 0.2s ease; text-align: center; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 160px;"
+                                            onmouseenter="this.style.transform='translateY(-3px)'; this.style.borderColor='#3b82f6'; this.style.boxShadow='0 4px 12px rgba(59, 130, 246, 0.12)';"
+                                            onmouseleave="this.style.transform='translateY(0)'; this.style.borderColor='#e2e8f0'; this.style.boxShadow='none';"
+                                            @onclick="() => SelectRoleInternal(role.Name)">
+                                        <div style="font-size: 2rem; margin-bottom: 0.75rem;">
+                                            @GetRoleEmoji(role.Name)
+                                        </div>
+                                        <h5 style="margin: 0 0 0.5rem 0; color: #1e293b; font-size: 1rem; font-weight: 600;">@role.Name</h5>
+                                        <p style="color: #64748b; font-size: 0.75rem; line-height: 1.4; margin: 0 0 0.75rem 0;">
+                                            @GetRoleDescription(role.Name)
+                                        </p>
+                                        <div style="padding: 0.25rem 0.75rem; background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 0.25rem; font-size: 0.75rem; color: #475569; font-weight: 500;">
+                                            â†’ @GetDashboardName(role.Name)
+                                        </div>
+                                    </button>
+                                }
+                            </div>
+                            
+                            <div style="margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
+                                <div style="display: flex; align-items: center; gap: 0.5rem; color: #64748b; font-size: 0.75rem;">
+                                    <span style="color: #3b82f6; font-size: 1rem;">â„¹ï¸</span>
+                                    <span>You can switch roles anytime using the role selector in the top navigation.</span>
+                                </div>
+                                <div style="color: #64748b; font-size: 0.75rem;">
+                                    ðŸ‘¤ User: <strong style="color: #1e293b;">@(RoleContext.CurrentUsername ?? "Unknown")</strong>
+                                </div>
+                            </div>
+                        }
+                        else if (isLoading)
+                        {
+                            <div style="text-align: center; padding: 2rem 0;">
+                                <div style="font-size: 2rem; margin-bottom: 0.75rem; color: #3b82f6;">â³</div>
+                                <p style="color: #64748b; font-size: 0.875rem;">Loading your roles...</p>
+                            </div>
+                        }
+                        else
+                        {
+                            <div style="text-align: center; padding: 2rem 0;">
+                                <div style="font-size: 2rem; margin-bottom: 0.75rem; color: #f59e0b;">âš ï¸</div>
+                                <h5 style="color: #dc2626; margin: 0 0 0.75rem 0; font-size: 1.125rem; font-weight: 600;">No Roles Assigned</h5>
+                                <p style="color: #64748b; font-size: 0.875rem; margin-bottom: 1rem;">
+                                    You don't have any roles assigned. Please contact your system administrator.
+                                </p>
+                                <button class="lgreeny-btn-secondary" @onclick="GoToLogin">
+                                    â† Return to Login
+                                </button>
+                            </div>
+                        }
+
+                        @* DEBUG INFORMATION *@
+                        @if (debugMessage != null)
+                        {
+                            <div style="margin-top: 1rem; padding: 0.75rem; background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 0.375rem;">
+                                <h6 style="margin: 0 0 0.5rem 0; font-weight: 600; font-size: 0.875rem; color: #1e293b;">Debug Information</h6>
+                                <pre style="margin: 0; font-size: 0.75rem; color: #475569; white-space: pre-wrap; font-family: 'Courier New', monospace;">@debugMessage</pre>
+                            </div>
+                        }
+
+                        @if (debugDatabaseRoles.Any())
+                        {
+                            <div style="margin-top: 0.75rem;">
+                                <h6 style="margin: 0 0 0.5rem 0; font-weight: 600; font-size: 0.875rem; color: #1e293b;">Database Roles for Debugging</h6>
+                                <ul style="list-style: none; padding: 0; margin: 0; font-size: 0.75rem;">
+                                    @foreach (var dbRole in debugDatabaseRoles)
+                                    {
+                                        <li style="padding: 0.25rem 0; color: #475569;">
+                                            <span style="color: #10b981;">âœ“</span> @dbRole.Name (ID: @dbRole.RoleId)
+                                        </li>
+                                    }
+                                </ul>
+                            </div>
+                        }
+                    </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private bool isLoading = true;
+    private bool hasRendered = false;
+    private List<string> pendingJSCalls = new();
+    private List<ApplicationRole> debugDatabaseRoles = new();
+    private string? debugMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            isLoading = true;
+            
+            // Initialize role context
+            var initialized = await RoleContext.InitializeAsync();
+            
+            if (!initialized)
+            {
+                // Queue navigation for after render if initialization failed
+                pendingJSCalls.Add("NAVIGATE:/login");
+                return;
+            }
+
+            // DEBUG: For AIPC\neilr, let's verify they have both roles in the database
+            if (RoleContext.CurrentUsername?.Equals("AIPC\\neilr", StringComparison.OrdinalIgnoreCase) == true)
+            {
+                await DebugAndFixUserRoles();
+            }
+
+            // Check if user has only one role - this shouldn't happen since single-role users
+            // are auto-assigned in RoleContextService and won't reach this page
+            if (RoleContext.UserRoles.Count == 1)
+            {
+                Console.WriteLine("SelectRole: Single role user reached SelectRole page - this shouldn't happen, redirecting to dashboard");
+                await RoleContext.SetActiveRoleAsync(RoleContext.UserRoles.First().Name);
+                var dashboardRoute = RoleContext.GetDashboardRouteForRole();
+                
+                // Queue navigation for after render
+                pendingJSCalls.Add($"NAVIGATE:{dashboardRoute}");
+                return;
+            }
+            
+            // Check if user has no roles
+            if (RoleContext.UserRoles.Count == 0)
+            {
+                Console.WriteLine("SelectRole: User has no roles - this is an error condition");
+                return; // Will show "No Roles Assigned" message
+            }
+            
+            // If we get here, user has multiple roles and should see the selection UI
+            Console.WriteLine($"SelectRole: User has {RoleContext.UserRoles.Count} roles, showing selection UI");
+            Console.WriteLine($"SelectRole: Available roles: {string.Join(", ", RoleContext.UserRoles.Select(r => r.Name))}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"SelectRole initialization error: {ex.Message}");
+            
+            // Queue error logging for after render
+            pendingJSCalls.Add($"ERROR:StartupRoleSelector initialization error: {ex.Message}");
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task DebugAndFixUserRoles()
+    {
+        try
+        {
+            // Create a separate scope to avoid DbContext conflicts
+            using var scope = ServiceProvider.CreateScope();
+            var scopedUserService = scope.ServiceProvider.GetRequiredService<UserService>();
+            var scopedRoleService = scope.ServiceProvider.GetRequiredService<RoleService>();
+            
+            // Get the user
+            var user = await scopedUserService.GetUserByUsernameAsync("AIPC\\neilr");
+            if (user == null)
+            {
+                debugMessage = "User AIPC\\neilr not found in database";
+                return;
+            }
+
+            // Get global roles directly from database (these are deprecated)
+            debugDatabaseRoles = await scopedUserService.GetUserRolesAsync(user.UserId);
+            
+            Console.WriteLine($"SelectRole DEBUG: User {user.UserId} has {debugDatabaseRoles.Count} global roles in database (deprecated)");
+            Console.WriteLine($"SelectRole DEBUG: Global database roles: {string.Join(", ", debugDatabaseRoles.Select(r => $"{r.Name} (ID: {r.RoleId})"))}");
+            
+            // Check project-specific roles (these are the current system)
+            try
+            {
+                var scopedProjectRoleService = scope.ServiceProvider.GetRequiredService<ProjectRoleService>();
+                var userProjectAccess = await scopedProjectRoleService.GetUserProjectAccessAsync(user.UserId);
+                
+                Console.WriteLine($"SelectRole DEBUG: User has project access to {userProjectAccess.Count} projects");
+                
+                var projectRoleCount = userProjectAccess.Sum(upa => upa.ProjectRoles.Count);
+                Console.WriteLine($"SelectRole DEBUG: Total project-specific roles: {projectRoleCount}");
+                
+                foreach (var projectAccess in userProjectAccess)
+                {
+                    Console.WriteLine($"SelectRole DEBUG: Project '{projectAccess.Project.ProjectName}' roles: {string.Join(", ", projectAccess.ProjectRoles.Select(pr => pr.ApplicationRole?.Name ?? "Unknown"))}");
+                }
+
+                var combinedRoleCount = debugDatabaseRoles.Count + projectRoleCount;
+                debugMessage = $"User has {debugDatabaseRoles.Count} global roles (deprecated) and {projectRoleCount} project-specific roles (current system: total {combinedRoleCount}). RoleContext shows {RoleContext.UserRoles.Count} roles.";
+            }
+            catch (Exception projectEx)
+            {
+                Console.WriteLine($"SelectRole DEBUG: Error getting project roles: {projectEx.Message}");
+                debugMessage = $"User has {debugDatabaseRoles.Count} global roles (deprecated). Error checking project roles: {projectEx.Message}";
+            }
+            
+            // NOTE: We no longer assign global roles - users should be assigned to project-specific roles
+            // If user needs roles, they should be assigned through Project Role Management
+            debugMessage += " Global role assignment is deprecated - use Project Role Management instead.";
+        }
+        catch (Exception ex)
+        {
+            debugMessage = $"Error debugging user roles: {ex.Message}";
+            Console.WriteLine($"SelectRole DEBUG ERROR: {ex.Message}");
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            hasRendered = true;
+            
+            // Process any pending operations that were queued during initialization
+            if (pendingJSCalls.Any())
+            {
+                foreach (var operation in pendingJSCalls)
+                {
+                    try
+                    {
+                        if (operation.StartsWith("NAVIGATE:"))
+                        {
+                            var route = operation.Substring("NAVIGATE:".Length);
+                            Navigation.NavigateTo(route);
+                        }
+                        else if (operation.StartsWith("ERROR:"))
+                        {
+                            var errorMsg = operation.Substring("ERROR:".Length);
+                            await JSRuntime.InvokeVoidAsync("console.error", errorMsg);
+                        }
+                        else
+                        {
+                            await JSRuntime.InvokeVoidAsync("console.log", operation);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"SelectRole: Error executing pending operation: {ex.Message}");
+                    }
+                }
+                pendingJSCalls.Clear();
+            }
+        }
+    }
+
+    private async Task SelectRoleInternal(string roleName)
+    {
+        try
+        {
+            Console.WriteLine($"SelectRole: Starting role selection for '{roleName}'");
+            
+            var success = await RoleContext.SetActiveRoleAsync(roleName);
+            Console.WriteLine($"SelectRole: SetActiveRoleAsync result: {success}");
+            
+            if (success)
+            {
+                var dashboardRoute = RoleContext.GetDashboardRouteForRole(roleName);
+                Console.WriteLine($"SelectRole: Dashboard route for '{roleName}': '{dashboardRoute}'");
+                
+                // Add specific debugging for ReadOnly role
+                if (roleName.Equals("ReadOnly", StringComparison.OrdinalIgnoreCase))
+                {
+                    Console.WriteLine($"SelectRole: ReadOnly role selected, should navigate to: '{dashboardRoute}'");
+                    Console.WriteLine($"SelectRole: Current role after assignment: {RoleContext.CurrentRole?.Name}");
+                    Console.WriteLine($"SelectRole: RoleContext.IsCurrentRole('ReadOnly'): {RoleContext.IsCurrentRole("ReadOnly")}");
+                }
+                
+                // Force a state change before navigation
+                StateHasChanged();
+                
+                // Add a small delay to ensure state is updated
+                await Task.Delay(100);
+                
+                Console.WriteLine($"SelectRole: About to navigate to: '{dashboardRoute}'");
+                Navigation.NavigateTo(dashboardRoute);
+                Console.WriteLine($"SelectRole: Navigation call completed");
+            }
+            else
+            {
+                Console.WriteLine($"SelectRole: Failed to set active role to '{roleName}'");
+                
+                // Only call JavaScript if component has rendered
+                if (hasRendered)
+                {
+                    await JSRuntime.InvokeVoidAsync("alert", $"Failed to select {roleName} role.");
+                }
+                else
+                {
+                    Console.WriteLine($"SelectRole: Failed to select {roleName} role");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"SelectRole: Role selection error for '{roleName}': {ex.Message}");
+            Console.WriteLine($"SelectRole: Stack trace: {ex.StackTrace}");
+            
+            // Only call JavaScript if component has rendered
+            if (hasRendered)
+            {
+                await JSRuntime.InvokeVoidAsync("console.error", "Role selection error:", ex.Message);
+                await JSRuntime.InvokeVoidAsync("alert", "An error occurred while selecting the role.");
+            }
+        }
+    }
+
+    private string GetRoleDescription(string roleName)
+    {
+        return roleName.ToLower() switch
+        {
+            "admin" => "Full system administration access. Manage users, roles, and system configuration.",
+            "auditor" => "Review and audit document activities. Generate compliance reports and track changes.",
+            "editor" => "Create, edit, and manage documents. Upload new content and modify existing files.",
+            "dataowner" => "Oversee data governance and ownership. Control access and data classification.",
+            "security" => "Monitor security events and manage access controls. Review security policies.",
+            "readonly" => "View-only access to documents and reports. Browse and search content.",
+            _ => "Standard user access to the document management system."
+        };
+    }
+
+    private string GetDashboardName(string roleName)
+    {
+        return roleName.ToLower() switch
+        {
+            "admin" => "Administration Dashboard",
+            "auditor" => "Auditor Dashboard", 
+            "editor" => "Editor Dashboard",
+            "dataowner" => "Data Owner Dashboard",
+            "security" => "Security Dashboard",
+            "readonly" => "Document Search",
+            _ => "Dashboard"
+        };
+    }
+
+    private string GetRoleThemeColor(string roleName)
+    {
+        return roleName.ToLower() switch
+        {
+            "admin" => "text-danger",
+            "auditor" => "text-primary",
+            "editor" => "text-success",
+            "dataowner" => "text-info",
+            "security" => "text-warning",
+            "readonly" => "text-secondary",
+            _ => "text-muted"
+        };
+    }
+
+    private string GetRoleEmoji(string roleName)
+    {
+        return roleName.ToLower() switch
+        {
+            "admin" => "ðŸ‘‘",
+            "auditor" => "ðŸ“Š",
+            "editor" => "âœï¸",
+            "dataowner" => "ðŸ—‚ï¸",
+            "security" => "ðŸ”’",
+            "readonly" => "ðŸ‘ï¸",
+            _ => "ðŸ‘¤"
+        };
+    }
+
+    private void GoToLogin()
+    {
+        Navigation.NavigateTo("/login");
+    }
+
+    private async Task RefreshRoles()
+    {
+        try
+        {
+            // Re-run the debug and fix logic
+            if (RoleContext.CurrentUsername?.Equals("AIPC\\neilr", StringComparison.OrdinalIgnoreCase) == true)
+            {
+                await DebugAndFixUserRoles();
+            }
+            
+            // Re-initialize the role context
+            await RoleContext.InitializeAsync();
+            
+            // Force a UI refresh
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"SelectRole: Error refreshing roles: {ex.Message}");
+            if (hasRendered)
+            {
+                await JSRuntime.InvokeVoidAsync("console.error", "Error refreshing roles:", ex.Message);
+            }
+        }
+    }
+}

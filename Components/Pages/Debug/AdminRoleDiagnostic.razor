@@ -1,0 +1,523 @@
+﻿#if DEBUG
+@page "/debug/admin-role-diagnostic"
+@using DV.Web.Services
+@using DV.Shared.Security
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.AspNetCore.Authorization
+@inject AuthenticationStateProvider AuthStateProvider
+@inject UserService UserService
+@inject RoleContextService RoleContext
+@inject IJSRuntime JSRuntime
+@inject IServiceProvider ServiceProvider
+@inject NavigationManager Navigation
+@inject IAuthorizationService AuthorizationService
+@attribute [Authorize]
+@rendermode InteractiveServer
+
+<PageTitle>Admin Role Diagnostic</PageTitle>
+
+<div class="container mt-4">
+    <div class="card">
+        <div class="card-header bg-danger text-white">
+            <h4 class="mb-0">Admin Role Diagnostic</h4>
+            <small>Debugging why Global Admin cannot access Admin role</small>
+        </div>
+        <div class="card-body">
+            @if (isLoading)
+            {
+                <div class="text-center">
+                    <div class="spinner-border text-primary" role="status"></div>
+                    <p class="mt-2">Running diagnostic tests...</p>
+                </div>
+            }
+            else
+            {
+                <!-- Authentication Info -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5>1. Authentication Information</h5>
+                    </div>
+                    <div class="card-body">
+                        <table class="table table-striped">
+                            <tr>
+                                <td><strong>Is Authenticated:</strong></td>
+                                <td>
+                                    <span class="badge @(isAuthenticated ? "bg-success" : "bg-danger")">
+                                        @(isAuthenticated ? "Yes" : "No")
+                                    </span>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td><strong>Raw Username:</strong></td>
+                                <td><code>@rawUsername</code></td>
+                            </tr>
+                            <tr>
+                                <td><strong>Username Format:</strong></td>
+                                <td>@(rawUsername?.Contains('\\') == true ? "Domain\\User format" : "Simple username")</td>
+                            </tr>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Database User Info -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5>2. Database User Information</h5>
+                    </div>
+                    <div class="card-body">
+                        @if (databaseUser != null)
+                        {
+                            <table class="table table-striped">
+                                <tr>
+                                    <td><strong>User ID:</strong></td>
+                                    <td>@databaseUser.UserId</td>
+                                </tr>
+                                <tr>
+                                    <td><strong>Stored Username:</strong></td>
+                                    <td><code>@databaseUser.Username</code></td>
+                                </tr>
+                                <tr>
+                                    <td><strong>Display Name:</strong></td>
+                                    <td>@databaseUser.DisplayName</td>
+                                </tr>
+                                <tr>
+                                    <td><strong>Is Active:</strong></td>
+                                    <td>
+                                        <span class="badge @(databaseUser.IsActive ? "bg-success" : "bg-danger")">
+                                            @(databaseUser.IsActive ? "Yes" : "No")
+                                        </span>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td><strong>IsGlobalAdmin Flag:</strong></td>
+                                    <td>
+                                        <span class="badge @(databaseUser.IsGlobalAdmin == true ? "bg-success" : "bg-danger")">
+                                            @(databaseUser.IsGlobalAdmin == true ? "TRUE" : "FALSE")
+                                        </span>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td><strong>Username Match:</strong></td>
+                                    <td>
+                                        <span class="badge @(databaseUser.Username == rawUsername ? "bg-success" : "bg-warning")">
+                                            @(databaseUser.Username == rawUsername ? "MATCH" : "MISMATCH")
+                                        </span>
+                                    </td>
+                                </tr>
+                            </table>
+                        }
+                        else
+                        {
+                            <div class="alert alert-danger">
+                                <strong>ERROR:</strong> No user found in database for username: <code>@rawUsername</code>
+                            </div>
+                            
+                            @if (alternativeUser != null)
+                            {
+                                <div class="alert alert-warning">
+                                    <strong>FOUND ALTERNATIVE:</strong> Found user with similar username: <code>@alternativeUser.Username</code>
+                                    <br/>This suggests a domain mismatch between authentication and database storage.
+                                    <br/>
+                                    <button class="btn btn-sm btn-warning mt-2" @onclick="UseAlternativeUser">
+                                        Use This User Instead
+                                    </button>
+                                </div>
+                            }
+                        }
+                    </div>
+                </div>
+
+                <!-- Global Admin Check -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5>3. Global Admin Status Check</h5>
+                    </div>
+                    <div class="card-body">
+                        @if (databaseUser != null)
+                        {
+                            <table class="table table-striped">
+                                <tr>
+                                    <td><strong>IsGlobalAdminAsync(userId):</strong></td>
+                                    <td>
+                                        <span class="badge @(isGlobalAdminById ? "bg-success" : "bg-danger")">
+                                            @(isGlobalAdminById ? "TRUE" : "FALSE")
+                                        </span>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td><strong>IsGlobalAdminAsync(username):</strong></td>
+                                    <td>
+                                        <span class="badge @(isGlobalAdminByUsername ? "bg-success" : "bg-danger")">
+                                            @(isGlobalAdminByUsername ? "TRUE" : "FALSE")
+                                        </span>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td><strong>Direct Field Value:</strong></td>
+                                    <td>
+                                        <span class="badge @(databaseUser.IsGlobalAdmin == true ? "bg-success" : "bg-danger")">
+                                            @(databaseUser.IsGlobalAdmin?.ToString() ?? "NULL")
+                                        </span>
+                                    </td>
+                                </tr>
+                            </table>
+                        }
+                        else
+                        {
+                            <div class="alert alert-warning">Cannot check Global Admin status - user not found</div>
+                        }
+                    </div>
+                </div>
+
+                <!-- RoleContext Service Info -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5>4. RoleContext Service Information</h5>
+                    </div>
+                    <div class="card-body">
+                        <table class="table table-striped">
+                            <tr>
+                                <td><strong>Current Username:</strong></td>
+                                <td><code>@(RoleContext.CurrentUsername ?? "NULL")</code></td>
+                            </tr>
+                            <tr>
+                                <td><strong>Available Roles Count:</strong></td>
+                                <td>@RoleContext.UserRoles.Count</td>
+                            </tr>
+                            <tr>
+                                <td><strong>Current Role:</strong></td>
+                                <td><code>@(RoleContext.CurrentRole?.Name ?? "NULL")</code></td>
+                            </tr>
+                            <tr>
+                                <td><strong>Has Multiple Roles:</strong></td>
+                                <td>
+                                    <span class="badge @(RoleContext.HasMultipleRoles ? "bg-info" : "bg-secondary")">
+                                        @(RoleContext.HasMultipleRoles ? "Yes" : "No")
+                                    </span>
+                                </td>
+                            </tr>
+                        </table>
+                        
+                        @if (RoleContext.UserRoles.Any())
+                        {
+                            <h6 class="mt-3">Available Roles:</h6>
+                            <ul class="list-group">
+                                @foreach (var role in RoleContext.UserRoles)
+                                {
+                                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                                        <span><strong>@role.Name</strong> - @role.Description</span>
+                                        <span class="badge bg-primary">ID: @role.RoleId</span>
+                                    </li>
+                                }
+                            </ul>
+                        }
+                        else
+                        {
+                            <div class="alert alert-warning">No roles available in RoleContext</div>
+                        }
+                    </div>
+                </div>
+
+                <!-- Manual Admin Check -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5>5. Manual Role Loading Test</h5>
+                    </div>
+                    <div class="card-body">
+                        @if (manualRoles.Any())
+                        {
+                            <h6>Manually Loaded Roles for User ID @databaseUser?.UserId:</h6>
+                            <ul class="list-group">
+                                @foreach (var role in manualRoles)
+                                {
+                                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                                        <span><strong>@role.Name</strong> - @role.Description</span>
+                                        <span class="badge bg-success">ID: @role.RoleId</span>
+                                    </li>
+                                }
+                            </ul>
+                        }
+                        else
+                        {
+                            <div class="alert alert-warning">No roles found in manual check</div>
+                        }
+                    </div>
+                </div>
+
+                <!-- All Global Admins -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5>6. All Global Admins in System</h5>
+                    </div>
+                    <div class="card-body">
+                        @if (allGlobalAdmins.Any())
+                        {
+                            <table class="table table-striped table-sm">
+                                <thead>
+                                    <tr>
+                                        <th>User ID</th>
+                                        <th>Username</th>
+                                        <th>Display Name</th>
+                                        <th>IsGlobalAdmin</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var admin in allGlobalAdmins)
+                                    {
+                                        <tr class="@(admin.Username == rawUsername ? "table-warning" : "")">
+                                            <td>@admin.UserId</td>
+                                            <td><code>@admin.Username</code></td>
+                                            <td>@admin.DisplayName</td>
+                                            <td>
+                                                <span class="badge bg-success">@admin.IsGlobalAdmin</span>
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        }
+                        else
+                        {
+                            <div class="alert alert-danger">No Global Admins found in the system!</div>
+                        }
+                    </div>
+                </div>
+
+                <!-- Recommended Actions -->
+                <div class="card">
+                    <div class="card-header bg-warning">
+                        <h5>7. Recommended Actions</h5>
+                    </div>
+                    <div class="card-body">
+                        @if (!string.IsNullOrEmpty(recommendedAction))
+                        {
+                            <div class="alert alert-info">
+                                @((MarkupString)recommendedAction)
+                            </div>
+                        }
+                        
+                        <div class="btn-group">
+                            <button class="btn btn-primary" @onclick="RefreshDiagnostic">
+                                <i class="bi bi-arrow-clockwise me-1"></i>
+                                Refresh Diagnostic
+                            </button>
+                            <button class="btn btn-secondary" @onclick="LogToConsole">
+                                <i class="bi bi-terminal me-1"></i>
+                                Log to Console
+                            </button>
+                            @if (databaseUser != null && databaseUser.IsGlobalAdmin != true)
+                            {
+                                <button class="btn btn-success" @onclick="FixGlobalAdminStatus">
+                                    <i class="bi bi-wrench me-1"></i>
+                                    Fix Global Admin Status
+                                </button>
+                            }
+                        </div>
+                    </div>
+                </div>
+
+                @if (!string.IsNullOrEmpty(errorMessage))
+                {
+                    <div class="alert alert-danger mt-3">
+                        <strong>Error:</strong> @errorMessage
+                    </div>
+                }
+            }
+        </div>
+    </div>
+</div>
+
+@code {
+    private bool isLoading = true;
+    private bool isAuthenticated = false;
+    private string? rawUsername;
+    private ApplicationUser? databaseUser;
+    private ApplicationUser? alternativeUser;
+    private bool isGlobalAdminById = false;
+    private bool isGlobalAdminByUsername = false;
+    private List<ApplicationRole> manualRoles = new();
+    private List<ApplicationUser> allGlobalAdmins = new();
+    private string? errorMessage;
+    private string? recommendedAction;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await RunDiagnostic();
+    }
+
+    private async Task RunDiagnostic()
+    {
+        try
+        {
+            isLoading = true;
+            errorMessage = null;
+            recommendedAction = null;
+
+            // Step 1: Get authentication info
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            isAuthenticated = authState.User.Identity?.IsAuthenticated == true;
+            rawUsername = authState.User.Identity?.Name;
+
+            if (!isAuthenticated || string.IsNullOrEmpty(rawUsername))
+            {
+                errorMessage = "User is not authenticated or username is empty";
+                return;
+            }
+
+            // Step 2: Get user from database (using separate scope)
+            using (var scope = ServiceProvider.CreateScope())
+            {
+                var scopedUserService = scope.ServiceProvider.GetRequiredService<UserService>();
+                databaseUser = await scopedUserService.GetUserByUsernameAsync(rawUsername);
+                
+                // If not found, try to find alternative username with same user part
+                if (databaseUser == null && rawUsername.Contains('\\'))
+                {
+                    var userPart = rawUsername.Split('\\')[1]; // Extract "neil.rainsforth"
+                    var allUsers = await scopedUserService.GetAllUsersAsync();
+                    alternativeUser = allUsers.FirstOrDefault(u => 
+                        u.Username.Contains('\\') && 
+                        u.Username.Split('\\')[1].Equals(userPart, StringComparison.OrdinalIgnoreCase));
+                }
+            }
+
+            var userToAnalyze = databaseUser ?? alternativeUser;
+            if (userToAnalyze == null)
+            {
+                recommendedAction = $"<strong>User not found!</strong><br/>The username '<code>{rawUsername}</code>' was not found in the database. You may need to:<br/>1. Create the user manually<br/>2. Check if the username format is correct<br/>3. Verify the authentication is working properly";
+                return;
+            }
+
+            // Step 3: Check Global Admin status through different methods (using separate scopes)
+            using (var scope = ServiceProvider.CreateScope())
+            {
+                var scopedUserService = scope.ServiceProvider.GetRequiredService<UserService>();
+                isGlobalAdminById = await scopedUserService.IsGlobalAdminAsync(userToAnalyze.UserId);
+                isGlobalAdminByUsername = await scopedUserService.IsGlobalAdminAsync(userToAnalyze.Username);
+            }
+
+            // Step 4: Manually load roles for this user (using separate scope)
+            using (var scope = ServiceProvider.CreateScope())
+            {
+                var scopedUserService = scope.ServiceProvider.GetRequiredService<UserService>();
+                manualRoles = await scopedUserService.GetUserRolesAsync(userToAnalyze.UserId);
+            }
+
+            // Step 5: Get all global admins (using separate scope)
+            using (var scope = ServiceProvider.CreateScope())
+            {
+                var scopedUserService = scope.ServiceProvider.GetRequiredService<UserService>();
+                allGlobalAdmins = await scopedUserService.GetGlobalAdminsAsync();
+            }
+
+            // Step 6: Analyze and provide recommendations
+            AnalyzeResults();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error during diagnostic: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task UseAlternativeUser()
+    {
+        if (alternativeUser != null)
+        {
+            databaseUser = alternativeUser;
+            alternativeUser = null;
+            
+            // Re-run the analysis with the alternative user
+            await RunDiagnostic();
+        }
+    }
+
+    private void AnalyzeResults()
+    {
+        var userToAnalyze = databaseUser ?? alternativeUser;
+        if (userToAnalyze == null) return;
+
+        if (databaseUser == null && alternativeUser != null)
+        {
+            recommendedAction = $"<strong>Username domain mismatch!</strong><br/>Authentication provides '<code>{rawUsername}</code>' but database has '<code>{alternativeUser.Username}</code>'. This is likely a domain configuration issue where your authentication domain (AD) differs from what was originally stored (AIPC).";
+            return;
+        }
+
+        if (userToAnalyze.IsGlobalAdmin == true)
+        {
+            if (!manualRoles.Any(r => r.Name.Equals("Admin", StringComparison.OrdinalIgnoreCase)))
+            {
+                recommendedAction = "<strong>Global Admin flag is set, but Admin role is not appearing!</strong><br/>This suggests an issue with the RoleContextService.LoadUserRoles method. The service should detect the IsGlobalAdmin flag and add an Admin role.";
+            }
+            else if (!RoleContext.UserRoles.Any(r => r.Name.Equals("Admin", StringComparison.OrdinalIgnoreCase)))
+            {
+                recommendedAction = "<strong>Admin role loads manually but not in RoleContext!</strong><br/>There may be an issue with RoleContext initialization or a caching problem. Try refreshing or logging out and back in.";
+            }
+            else
+            {
+                recommendedAction = "<strong>Everything looks correct!</strong><br/>You should be able to select the Admin role. If you're still getting a 403 error, there may be an authorization policy issue.";
+            }
+        }
+        else
+        {
+            recommendedAction = $"<strong>IsGlobalAdmin flag is NOT set!</strong><br/>The user record for '<code>{userToAnalyze.Username}</code>' has IsGlobalAdmin = {userToAnalyze.IsGlobalAdmin?.ToString() ?? "NULL"}. You need to set this to TRUE.";
+        }
+    }
+
+    private async Task FixGlobalAdminStatus()
+    {
+        try
+        {
+            var userToFix = databaseUser ?? alternativeUser;
+            if (userToFix == null) return;
+
+            using (var scope = ServiceProvider.CreateScope())
+            {
+                var scopedUserService = scope.ServiceProvider.GetRequiredService<UserService>();
+                await scopedUserService.SetGlobalAdminAsync(userToFix.UserId, true);
+            }
+            
+            // Refresh the diagnostic
+            await RunDiagnostic();
+            
+            // Reinitialize the role context
+            await RoleContext.InitializeAsync();
+            
+            await JSRuntime.InvokeVoidAsync("alert", "Global Admin status has been set to TRUE. Please refresh the page or try accessing the Admin role again.");
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error fixing Global Admin status: {ex.Message}";
+        }
+    }
+
+    private async Task RefreshDiagnostic()
+    {
+        await RunDiagnostic();
+        StateHasChanged();
+    }
+
+    private async Task LogToConsole()
+    {
+        await JSRuntime.InvokeVoidAsync("console.log", "=== ADMIN ROLE DIAGNOSTIC ===");
+        await JSRuntime.InvokeVoidAsync("console.log", $"Raw Username: {rawUsername}");
+        await JSRuntime.InvokeVoidAsync("console.log", $"Database User ID: {databaseUser?.UserId}");
+        await JSRuntime.InvokeVoidAsync("console.log", $"Alternative User: {alternativeUser?.Username}");
+        await JSRuntime.InvokeVoidAsync("console.log", $"IsGlobalAdmin Field: {(databaseUser ?? alternativeUser)?.IsGlobalAdmin}");
+        await JSRuntime.InvokeVoidAsync("console.log", $"IsGlobalAdmin by ID: {isGlobalAdminById}");
+        await JSRuntime.InvokeVoidAsync("console.log", $"IsGlobalAdmin by Username: {isGlobalAdminByUsername}");
+        await JSRuntime.InvokeVoidAsync("console.log", $"Manual Roles Count: {manualRoles.Count}");
+        await JSRuntime.InvokeVoidAsync("console.log", $"RoleContext Roles Count: {RoleContext.UserRoles.Count}");
+        
+        if (!string.IsNullOrEmpty(errorMessage))
+        {
+            await JSRuntime.InvokeVoidAsync("console.error", $"Error: {errorMessage}");
+        }
+        
+        await JSRuntime.InvokeVoidAsync("console.log", "=== END DIAGNOSTIC ===");
+    }
+}
+#endif

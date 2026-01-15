@@ -1,0 +1,165 @@
+@* ============================================================================
+   LoginChoice.razor - Login Method Selection Page
+   ============================================================================
+   
+   Purpose: Provides a login screen with two authentication options:
+   1. Username/Password - Manual credentials authenticated against AD FS
+   2. SSO Sign-in - Automatic Windows Integrated Authentication via AD FS
+   
+   This page is useful for debugging purposes to allow logging in as different users.
+   
+   Created: January 2026
+   ============================================================================ *@
+
+@page "/login-choice"
+@attribute [AllowAnonymous]
+@layout LoginLayout
+@using System.ComponentModel.DataAnnotations
+@using Microsoft.AspNetCore.Authorization
+@inject NavigationManager Navigation
+@inject IConfiguration Configuration
+
+<PageTitle>Sign In - Document Viewer</PageTitle>
+
+<div class="login-container">
+    <div class="login-card">
+        <div class="login-header">
+            <i class="bi bi-file-earmark-text login-icon"></i>
+            <h2>Document Viewer</h2>
+            <p class="text-muted">Please sign in to continue</p>
+        </div>
+
+        @if (!string.IsNullOrEmpty(errorMessage))
+        {
+            <div class="alert alert-danger" role="alert">
+                <i class="bi bi-exclamation-triangle-fill me-2"></i>
+                @errorMessage
+            </div>
+        }
+
+        <div class="login-options">
+            @* Option 1: SSO Sign-in (Windows Integrated Authentication) *@
+            <div class="login-option-section">
+                <h5 class="section-title">
+                    <i class="bi bi-windows me-2"></i>Windows Single Sign-On
+                </h5>
+                <p class="section-description">
+                    Use your Windows network credentials automatically. No password required.
+                </p>
+                <a href="/auth/login-sso?returnUrl=/" class="btn btn-primary btn-lg w-100">
+                    <i class="bi bi-box-arrow-in-right me-2"></i>
+                    SSO Sign-in
+                </a>
+            </div>
+
+            <div class="login-divider">
+                <span>OR</span>
+            </div>
+
+            @* Option 2: Username/Password Login *@
+            <div class="login-option-section">
+                <h5 class="section-title">
+                    <i class="bi bi-person-badge me-2"></i>Sign in with Different Account
+                </h5>
+                <p class="section-description">
+                    Enter credentials for a different AD account (for debugging).
+                </p>
+                
+                <EditForm Model="@loginModel" OnValidSubmit="HandlePasswordLogin" FormName="LoginForm">
+                    <DataAnnotationsValidator />
+                    
+                    <div class="mb-3">
+                        <label for="username" class="form-label">Username</label>
+                        <div class="input-group">
+                            <span class="input-group-text"><i class="bi bi-person"></i></span>
+                            <InputText id="username" @bind-Value="loginModel.Username" 
+                                       class="form-control" placeholder="AD\username or username@domain" />
+                        </div>
+                        <ValidationMessage For="@(() => loginModel.Username)" class="text-danger small" />
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="password" class="form-label">Password</label>
+                        <div class="input-group">
+                            <span class="input-group-text"><i class="bi bi-key"></i></span>
+                            <InputText id="password" @bind-Value="loginModel.Password" 
+                                       type="password" class="form-control" placeholder="Enter password" />
+                        </div>
+                        <ValidationMessage For="@(() => loginModel.Password)" class="text-danger small" />
+                    </div>
+                    
+                    <button type="submit" class="btn btn-outline-primary btn-lg w-100" disabled="@isLoading">
+                        @if (isLoading)
+                        {
+                            <span class="spinner-border spinner-border-sm me-2" role="status"></span>
+                            <span>Signing in...</span>
+                        }
+                        else
+                        {
+                            <i class="bi bi-shield-lock me-2"></i>
+                            <span>Sign in with Password</span>
+                        }
+                    </button>
+                </EditForm>
+            </div>
+        </div>
+
+        <div class="login-footer">
+            <p class="text-muted small mb-0">
+                <i class="bi bi-info-circle me-1"></i>
+                Authentication is handled by AD FS at <code>@GetAdfsHost()</code>
+            </p>
+        </div>
+    </div>
+</div>
+
+@code {
+    private LoginModel loginModel = new();
+    private bool isLoading = false;
+    private string? errorMessage;
+
+    private string GetAdfsHost()
+    {
+        var authority = Configuration["Adfs:Authority"] ?? "AD FS Server";
+        try
+        {
+            var uri = new Uri(authority);
+            return uri.Host;
+        }
+        catch
+        {
+            return authority;
+        }
+    }
+
+    private void HandlePasswordLogin()
+    {
+        isLoading = true;
+        errorMessage = null;
+        StateHasChanged();
+
+        try
+        {
+            // Navigate to the password authentication endpoint
+            // This endpoint will handle the ROPC flow with AD FS
+            var encodedUsername = Uri.EscapeDataString(loginModel.Username ?? "");
+            
+            // Use a POST form to submit credentials securely
+            Navigation.NavigateTo($"/auth/login-password?username={encodedUsername}&returnUrl=/", forceLoad: true);
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Login failed: {ex.Message}";
+            isLoading = false;
+        }
+    }
+
+    public class LoginModel
+    {
+        [Required(ErrorMessage = "Username is required")]
+        public string? Username { get; set; }
+
+        [Required(ErrorMessage = "Password is required")]
+        public string? Password { get; set; }
+    }
+}

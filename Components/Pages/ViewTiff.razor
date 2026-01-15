@@ -1,0 +1,379 @@
+﻿@* 
+   ============================================================================
+   ViewTiff.razor - OpenSeadragon TIFF Viewer Component
+   ============================================================================
+   
+   Purpose: Displays TIFF documents using OpenSeadragon deep zoom viewer.
+   Provides high-quality viewing with pan, zoom, and multi-page navigation.
+   
+   Created: [Date]
+   Last Updated: October 20, 2025
+   
+   Dependencies:
+   - OpenSeadragon 4.1.0+ for deep zoom viewing
+   - DocumentRepository: Handles database interactions for fetching document pages
+   - DocumentPage: Represents the model for individual pages of a document
+   - Bootstrap 5.x for styling
+*@
+
+@page "/viewtiff/{Database}/{TiffDocId:int}"
+@* Defines the route for this page with database and TIFF document ID parameters *@
+
+@using DV.Shared.Models
+@using DV.Web.Services
+@using DV.Shared.Security
+@using DV.Web.Components.Layout
+@using DV.Web.Components.Documents
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.JSInterop
+
+@inject DocumentRepository Repo
+@inject UserService UserService
+@inject UserProjectAccessService UserProjectAccessService
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject IJSRuntime JSRuntime
+
+@attribute [Authorize]
+
+@rendermode InteractiveServer
+@* Enables interactive server-side rendering *@
+
+<PageTitle>TIFF Viewer - OpenSeadragon</PageTitle> @* Sets the page title *@
+
+<div class="container-fluid p-0" style="height: 100vh; display: flex; flex-direction: column;">
+    @* Main container for the TIFF viewer *@
+    @if (isLoading) @* Check if the data is still loading *@
+    {
+        <div class="d-flex justify-content-center align-items-center" style="height: 100vh;">
+            <div class="text-center">
+                <div class="spinner-border text-primary mb-3" role="status" style="width: 3rem; height: 3rem;">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+                <p class="text-muted">Loading document viewer...</p>
+            </div>
+        </div>
+    }
+    else if (error != null) @* Check if there is an error *@
+    {
+        <div class="alert alert-danger m-3">
+            <i class="bi bi-exclamation-triangle me-2"></i> @* Error icon *@
+            @error @* Display the error message *@
+        </div>
+    }
+    else if (pages == null || pages.Count == 0) @* Check if no pages are found *@
+    {
+        <div class="alert alert-warning m-3">
+            <i class="bi bi-exclamation-triangle me-2"></i> @* Warning icon *@
+            No TIFF pages found for this document. @* Display a warning message *@
+        </div>
+    }
+    else @* If pages are found, display the OpenSeadragon viewer *@
+    {
+        @* =================================================================
+           Toolbar
+           =================================================================
+           Purpose: Provides document info and navigation controls
+        *@
+        <div class="bg-dark text-white p-2" style="flex-shrink: 0;">
+            <div class="container-fluid">
+                <div class="row align-items-center">
+                    <div class="col-md-4">
+                        <h6 class="mb-0">
+                            <i class="bi bi-file-earmark-image me-2"></i>
+                            Document #@DocumentId
+                        </h6>
+                    </div>
+                    <div class="col-md-4 text-center">
+                        <div class="btn-group" role="group">
+                            <button class="btn btn-sm btn-outline-light" 
+                                    @onclick="ZoomIn" 
+                                    title="Zoom In">
+                                <i class="bi bi-zoom-in"></i>
+                            </button>
+                            <button class="btn btn-sm btn-outline-light" 
+                                    @onclick="ZoomOut" 
+                                    title="Zoom Out">
+                                <i class="bi bi-zoom-out"></i>
+                            </button>
+                            <button class="btn btn-sm btn-outline-light" 
+                                    @onclick="HomeView" 
+                                    title="Reset View">
+                                <i class="bi bi-house"></i>
+                            </button>
+                            <button class="btn btn-sm btn-outline-light" 
+                                    @onclick="FullPage" 
+                                    title="Fit to Page">
+                                <i class="bi bi-arrows-fullscreen"></i>
+                            </button>
+                            <button class="btn btn-sm btn-outline-light" 
+                                    @onclick="RotateLeft" 
+                                    title="Rotate Left">
+                                <i class="bi bi-arrow-counterclockwise"></i>
+                            </button>
+                            <button class="btn btn-sm btn-outline-light" 
+                                    @onclick="RotateRight" 
+                                    title="Rotate Right">
+                                <i class="bi bi-arrow-clockwise"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="col-md-4 text-end">
+                        <span class="badge bg-secondary">
+                            Page @currentPageNumber of @pages.Count
+                        </span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        @* =================================================================
+           Page Navigation Bar
+           =================================================================
+        *@
+        <div class="bg-light border-bottom p-2" style="flex-shrink: 0;">
+            <div class="container-fluid">
+                <div class="d-flex justify-content-between align-items-center">
+                    <button class="btn btn-sm btn-outline-secondary" 
+                            @onclick="PreviousPage" 
+                            disabled="@(currentPageNumber <= 1)">
+                        <i class="bi bi-chevron-left"></i> Previous
+                    </button>
+                    
+                    <div class="btn-group" role="group" style="max-width: 600px; overflow-x: auto;">
+                        @foreach (var documentpage in pages)
+                        {
+                            <button class="btn btn-sm @(documentpage.PageNumber == currentPageNumber ? "btn-primary" : "btn-outline-secondary")"
+                                    @onclick="() => ViewPage(documentpage.PageNumber)">
+                                @documentpage.PageNumber
+                            </button>
+                        }
+                    </div>
+                    
+                    <button class="btn btn-sm btn-outline-secondary" 
+                            @onclick="NextPage" 
+                            disabled="@(currentPageNumber >= pages.Count)">
+                        Next <i class="bi bi-chevron-right"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        @* =================================================================
+           OpenSeadragon Viewer Container
+           =================================================================
+        *@
+        <div id="openseadragon-viewer" style="flex-grow: 1; background-color: #2a2a2a;"></div>
+    }
+</div>
+
+@* ============================================================================
+   Code-Behind Logic for the OpenSeadragon ViewTiff Page
+   ============================================================================ *@
+@code {
+    [Parameter] public string Database { get; set; } = "DefaultConnection";
+    [Parameter] public int TiffDocId { get; set; }
+    
+    private List<DocumentPage>? pages;
+    private int currentPageNumber = 1;
+    private bool isLoading = true;
+    private string? error;
+    private string? currentUsername;
+    private ApplicationUser? currentUser;
+    private bool viewerInitialized = false;
+
+    private int DocumentId => TiffDocId;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        Console.WriteLine($"ViewTiff: OnParametersSetAsync called for DocumentId: {TiffDocId}, Database: {Database}");
+        isLoading = true;
+        error = null;
+
+        try
+        {
+            // Get current user
+            var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+            currentUsername = authState.User.Identity?.Name;
+            Console.WriteLine($"ViewTiff: Current user: {currentUsername}");
+
+            if (string.IsNullOrEmpty(currentUsername))
+            {
+                error = "You must be authenticated to view documents.";
+                return;
+            }
+
+            currentUser = await UserService.GetUserByUsernameAsync(currentUsername);
+            if (currentUser == null)
+            {
+                error = "User not found in the system.";
+                return;
+            }
+
+            // Fetch the document to get the project ID
+            var doc = await Repo.GetDocumentAsync(Database, DocumentId);
+            if (doc == null)
+            {
+                error = "Document not found.";
+                return;
+            }
+
+            // Check if user is a global admin
+            var userRoles = await UserService.GetUserRolesAsync(currentUser.UserId);
+            var isGlobalAdmin = userRoles.Any(r => r.Name == "Admin");
+
+            if (!isGlobalAdmin)
+            {
+                // For non-admin users, validate project access
+                if (!doc.ProjectId.HasValue || !await UserProjectAccessService.UserHasProjectAccessAsync(currentUser.UserId, doc.ProjectId.Value))
+                {
+                    error = "You do not have permission to view documents from this project. Please contact your administrator for access.";
+                    return;
+                }
+            }
+
+            // Load the pages
+            pages = (await Repo.GetPagesAsync(Database, DocumentId)).ToList();
+            Console.WriteLine($"ViewTiff: Loaded {pages?.Count ?? 0} pages");
+            if (pages != null && pages.Count > 0)
+            {
+                currentPageNumber = pages[0].PageNumber;
+                Console.WriteLine($"ViewTiff: First page number: {currentPageNumber}, PageId: {pages[0].PageId}");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"ViewTiff: ERROR - {ex.Message}");
+            error = $"Error loading document: {ex.Message}";
+            pages = new List<DocumentPage>();
+        }
+        finally
+        {
+            isLoading = false;
+            Console.WriteLine($"ViewTiff: Loading complete. Error: {error ?? "none"}");
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        Console.WriteLine($"ViewTiff: OnAfterRenderAsync - firstRender={firstRender}, pages={pages?.Count ?? 0}, viewerInitialized={viewerInitialized}");
+        
+        // Remove firstRender check - it's not reliable in InteractiveServer mode
+        if (pages != null && pages.Count > 0 && !viewerInitialized)
+        {
+            Console.WriteLine("ViewTiff: Conditions met, initializing viewer...");
+            // Add a small delay to ensure DOM and OpenSeadragon library are fully loaded
+            await Task.Delay(200);
+            await InitializeViewer();
+            viewerInitialized = true;
+            Console.WriteLine("ViewTiff: Viewer initialization complete");
+        }
+        else
+        {
+            Console.WriteLine($"ViewTiff: Skipping initialization - pages null={pages == null}, count={pages?.Count ?? 0}, already initialized={viewerInitialized}");
+        }
+    }
+
+    private async Task InitializeViewer()
+    {
+        try
+        {
+            var imageUrl = GetImageUrlForPage(currentPageNumber);
+            Console.WriteLine($"Initializing OpenSeadragon with image: {imageUrl}");
+            await JSRuntime.InvokeVoidAsync("initializeOpenSeadragon", imageUrl);
+            Console.WriteLine("OpenSeadragon initialized successfully");
+        }
+        catch (Exception ex)
+        {
+            error = $"Error initializing viewer: {ex.Message}";
+            Console.WriteLine($"Error initializing viewer: {ex.Message}");
+            StateHasChanged();
+        }
+    }
+
+    private string GetImageUrlForPage(int pageNumber)
+    {
+        var page = pages?.FirstOrDefault(p => p.PageNumber == pageNumber);
+        if (page == null)
+            return "";
+
+        // Check if using BLOB storage
+        if (page.UsesBlobStorage)
+        {
+            // Use BLOB API endpoint with JPEG conversion for PageId
+            return $"/api/DocumentBlob/page/{page.PageId}/jpeg";
+        }
+        else
+        {
+            // Use traditional file-based API endpoint (already converts to JPEG)
+            return $"/api/tiff-view/{Database}/{DocumentId}/{pageNumber}";
+        }
+    }
+
+    private async Task ViewPage(int pageNumber)
+    {
+        if (pages != null && pages.Any(p => p.PageNumber == pageNumber))
+        {
+            currentPageNumber = pageNumber;
+            
+            // If viewer isn't initialized yet, initialize it with the new page
+            if (!viewerInitialized)
+            {
+                await InitializeViewer();
+                viewerInitialized = true;
+            }
+            else
+            {
+                // Otherwise just update the image
+                var imageUrl = GetImageUrlForPage(currentPageNumber);
+                await JSRuntime.InvokeVoidAsync("updateOpenSeadragonImage", imageUrl);
+            }
+        }
+    }
+
+    private async Task PreviousPage()
+    {
+        if (currentPageNumber > 1)
+        {
+            await ViewPage(currentPageNumber - 1);
+        }
+    }
+
+    private async Task NextPage()
+    {
+        if (pages != null && currentPageNumber < pages.Count)
+        {
+            await ViewPage(currentPageNumber + 1);
+        }
+    }
+
+    private async Task ZoomIn()
+    {
+        await JSRuntime.InvokeVoidAsync("zoomInOpenSeadragon");
+    }
+
+    private async Task ZoomOut()
+    {
+        await JSRuntime.InvokeVoidAsync("zoomOutOpenSeadragon");
+    }
+
+    private async Task HomeView()
+    {
+        await JSRuntime.InvokeVoidAsync("homeOpenSeadragon");
+    }
+
+    private async Task FullPage()
+    {
+        await JSRuntime.InvokeVoidAsync("fullPageOpenSeadragon");
+    }
+
+    private async Task RotateLeft()
+    {
+        await JSRuntime.InvokeVoidAsync("rotateLeftOpenSeadragon");
+    }
+
+    private async Task RotateRight()
+    {
+        await JSRuntime.InvokeVoidAsync("rotateRightOpenSeadragon");
+    }
+}

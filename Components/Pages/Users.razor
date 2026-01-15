@@ -1,0 +1,109 @@
+﻿    @page "/admin/users"
+@using DV.Shared.Security
+@using DV.Web.Services
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Web
+@inject UserService UserService
+@inject IJSRuntime JSRuntime
+@attribute [Authorize(Roles = "Admin")]
+
+<PageTitle>User Management</PageTitle>
+
+<h3>User Management</h3>
+
+<div class="row">
+    <div class="col-md-12">
+        <div class="card">
+            <div class="card-header bg-primary text-white">
+                <h5 class="mb-0">Users</h5>
+            </div>
+            <div class="card-body">
+                @if (users == null)
+                {
+                    <p><em>Loading...</em></p>
+                }
+                else
+                {
+                    <table class="table table-striped table-condensed" style="table-layout:fixed;width:100%">
+                        <colgroup>
+                            <col style="width:22%" />
+                            <col style="width:22%" />
+                            <col style="width:26%" />
+                            <col style="width:10%" />
+                            <col style="width:10%" />
+                            <col style="width:10%" />
+                        </colgroup>
+                        <thead>
+                            <tr>
+                                <th>Username</th>
+                                <th>Display Name</th>
+                                <th>Email</th>
+                                <th>Status</th>
+                                <th>Admin</th>
+                                <th>Created</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var user in users)
+                            {
+                                <tr>
+                                    <td class="text-truncate">@user.Username</td>
+                                    <td class="text-truncate">@user.DisplayName</td>
+                                    <td class="text-truncate">@user.Email</td>
+                                    <td>@(user.IsActive ? "Active" : "Inactive")</td>
+                                    <td>
+                                        @if (user.IsGlobalAdmin == true)
+                                        {
+                                            <span class="badge bg-danger">Admin</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="text-muted">-</span>
+                                        }
+                                    </td>
+                                    <td class="text-truncate">@user.CreatedDate.ToString("yyyy-MM-dd")</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                    
+                    <div class="mt-3">
+                        <div class="alert alert-info">
+                            <i class="bi bi-info-circle me-2"></i>
+                            <strong>Project-Based Access Control</strong>
+                            <p class="mb-0">User roles are now managed through Project Role Management. Users are assigned roles within specific projects rather than global roles.</p>
+                            <p class="mb-0 mt-2">
+                                <strong>To manage user access:</strong> Go to 
+                                <a href="/admin/project-roles" class="alert-link">Project Role Management</a> 
+                                to assign users to roles within specific projects.
+                            </p>
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    /* Condensed table for admin lists */
+    .table-condensed { font-size: 0.85rem; }
+    .table-condensed th, .table-condensed td { padding: 0.35rem 0.5rem; vertical-align: middle; overflow: hidden; }
+
+    /* Truncate long text to fit condensed columns */
+    .text-truncate { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+</style>
+
+@code {
+    private List<ApplicationUser>? users;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadUsers();
+    }
+
+    private async Task LoadUsers()
+    {
+        users = await UserService.GetAllUsersAsync();
+    }
+}

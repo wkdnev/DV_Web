@@ -1,0 +1,753 @@
+﻿@page "/editor/import"
+@attribute [RoleBasedAuthorization("Editor")]
+@using DV.Web.Services
+@using DV.Shared.Models
+@using DV.Web.Components.Layout
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.AspNetCore.Components.Forms
+@using System.IO
+@inject DocumentUploadService DocumentUploadService
+@inject AppDbContext DbContext
+@inject IJSRuntime JSRuntime
+@inject NavigationManager Navigation
+@inject IDbContextFactory<SecurityDbContext> SecurityDbContextFactory
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject ILogger<DocumentImport> Logger
+@rendermode InteractiveServer
+
+<PageTitle>Bulk Import - Editor</PageTitle>
+
+<div class="lgreeny-dashboard">
+    <!-- Header -->
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+        <div>
+            <h2 style="margin: 0; color: #1e293b; font-size: 1.75rem; font-weight: 600; display: flex; align-items: center; gap: 0.5rem;">
+                <Icon Name="package" Size="28" /> Bulk Document Import
+            </h2>
+            <p style="margin: 0.5rem 0 0 0; color: #64748b; font-size: 0.875rem;">Import multiple documents with metadata from a directory</p>
+        </div>
+        <button class="lgreeny-btn-secondary" style="width: auto;" @onclick="GoBackToDashboard">
+            <Icon Name="arrow-left" Size="16" /> Back to Dashboard
+        </button>
+    </div>
+
+    <!-- Project/Schema Selection -->
+    <div class="lgreeny-panel" style="margin-bottom: 1.5rem;">
+        <div class="panel-header">
+            <h3 class="panel-title"><Icon Name="folder" Size="20" /> Select Target Project / Schema</h3>
+        </div>
+        <div class="panel-body">
+            @if (isLoadingProjects)
+            {
+                <div style="text-align: center; padding: 2rem;">
+                    <div style="color: #3b82f6; font-size: 2rem;"><Icon Name="clock" Size="32" /></div>
+                    <p style="color: #64748b; margin-top: 1rem;">Loading your projects...</p>
+                </div>
+            }
+            else if (!string.IsNullOrEmpty(projectErrorMessage))
+            {
+                <div style="padding: 1rem; background: #fee2e2; border: 1px solid #fecaca; border-radius: 0.5rem; color: #991b1b;">
+                    <Icon Name="alert-circle" Size="16" /> @projectErrorMessage
+                </div>
+            }
+            else if (allProjects == null || !allProjects.Any())
+            {
+                <div style="padding: 2rem; text-align: center; background: #fef3c7; border: 1px solid #fde047; border-radius: 0.5rem;">
+                    <div style="font-size: 2rem; margin-bottom: 1rem;"><Icon Name="folder" Size="40" /></div>
+                    <h4 style="color: #1e293b; margin-bottom: 0.5rem;">No Projects Available</h4>
+                    <p style="color: #64748b;">You don't have Editor access to any projects yet.</p>
+                </div>
+            }
+            else
+            {
+                <div style="display: grid; gap: 1rem;">
+                    <div>
+                        <label style="display: block; font-weight: 600; color: #1e293b; margin-bottom: 0.5rem;">
+                            Select Project <span style="color: #dc2626;">*</span>
+                        </label>
+                        <select @bind="selectedProjectId" @bind:after="OnProjectSelected" class="lgreeny-input">
+                            <option value="0">-- Select a Project --</option>
+                            @foreach (var project in allProjects)
+                            {
+                                <option value="@project.ProjectId">@project.ProjectName (@project.SchemaName)</option>
+                            }
+                        </select>
+                    </div>
+                    
+                    @if (selectedProjectId > 0 && selectedProject != null)
+                    {
+                        <div style="padding: 0.75rem; background: #dbeafe; border-radius: 0.375rem; border: 1px solid #93c5fd;">
+                            <div style="display: flex; align-items: center; gap: 0.5rem;">
+                                <span style="color: #1e40af; font-weight: 600;"> Selected:</span>
+                                <span style="color: #1e293b;">@selectedProject.ProjectName</span>
+                                <span style="color: #64748b;"></span>
+                                <span style="color: #64748b; font-size: 0.875rem;">Schema: @selectedProject.SchemaName</span>
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+    </div>
+
+    @if (selectedProjectId > 0 && selectedProject != null)
+    {
+        <!-- Bulk Import Configuration -->
+        <div class="lgreeny-panel" style="margin-bottom: 1.5rem;">
+            <div class="panel-header">
+                <h3 class="panel-title"><Icon Name="folder-open" Size="20" /> Source Directory & Files</h3>
+            </div>
+            <div class="panel-body">
+                <div style="background: #eff6ff; border: 1px solid #93c5fd; border-radius: 0.5rem; padding: 1rem; margin-bottom: 1.5rem;">
+                    <div style="display: flex; align-items: start; gap: 0.75rem;">
+                        <span style="color: #1e40af; font-size: 1.25rem;"><Icon Name="info" Size="24" Color="#1e40af" /></span>
+                        <div>
+                            <h4 style="margin: 0 0 0.5rem 0; color: #1e40af; font-weight: 600;">How Bulk Import Works</h4>
+                            <ul style="margin: 0; padding-left: 1.25rem; color: #1e293b; font-size: 0.875rem; line-height: 1.6;">
+                                <li>Enter the full path to a directory containing your document files</li>
+                                <li>Supported formats: PDF, TIF, TIFF, JPG, JPEG, PNG, BMP, GIF (max 50MB each)</li>
+                                <li>Optionally provide a CSV/Excel file with metadata for the documents</li>
+                                <li>Files will be uploaded with automatically generated document numbers or mapped from metadata</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+
+                <div style="display: grid; gap: 1.5rem;">
+                    <!-- Directory Path Input -->
+                    <div>
+                        <label style="display: block; font-weight: 600; color: #1e293b; margin-bottom: 0.5rem;">
+                            Source Directory Path <span style="color: #dc2626;">*</span>
+                        </label>
+                        <input type="text" 
+                               @bind="sourceDirectory" 
+                               @bind:event="oninput"
+                               class="lgreeny-input" 
+                               placeholder="C:\Documents\Import or \\server\share\documents"
+                               style="font-family: 'Courier New', monospace;" />
+                        <div style="font-size: 0.875rem; color: #64748b; margin-top: 0.5rem;">
+                            Enter the full path to the directory containing files to import
+                        </div>
+                    </div>
+
+                    <!-- Scan Button -->
+                    <div>
+                        <button class="lgreeny-btn-primary" 
+                                @onclick="ScanDirectory" 
+                                disabled="@(string.IsNullOrWhiteSpace(sourceDirectory) || isScanning)">
+                            @if (isScanning)
+                            {
+                                <span><Icon Name="loader" Size="16" /> Scanning...</span>
+                            }
+                            else
+                            {
+                                <span><Icon Name="search" Size="16" /> Scan Directory</span>
+                            }
+                        </button>
+                    </div>
+
+                    @if (!string.IsNullOrEmpty(scanErrorMessage))
+                    {
+                        <div style="padding: 1rem; background: #fee2e2; border: 1px solid #fecaca; border-radius: 0.5rem; color: #991b1b;">
+                            <Icon Name="alert-circle" Size="16" /> @scanErrorMessage
+                        </div>
+                    }
+
+                    @if (scannedFiles.Any())
+                    {
+                        <div style="padding: 1rem; background: #d1fae5; border: 1px solid #6ee7b7; border-radius: 0.5rem;">
+                            <div style="display: flex; align-items: center; gap: 0.5rem; color: #065f46;">
+                                <span style="font-size: 1.25rem;"><Icon Name="check-circle" Size="20" Color="#065f46" /></span>
+                                <span style="font-weight: 600;">Found @scannedFiles.Count file(s) ready for import</span>
+                            </div>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+
+        @if (scannedFiles.Any())
+        {
+            <!-- Metadata Configuration -->
+            <div class="lgreeny-panel" style="margin-bottom: 1.5rem;">
+                <div class="panel-header">
+                    <h3 class="panel-title"><Icon Name="file-text" Size="20" /> Metadata Configuration</h3>
+                </div>
+                <div class="panel-body">
+                    <div style="display: grid; gap: 1.5rem;">
+                        <!-- Metadata Source Selection -->
+                        <div>
+                            <label style="display: block; font-weight: 600; color: #1e293b; margin-bottom: 1rem;">
+                                Metadata Source
+                            </label>
+                            <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem;">
+                                <label style="display: flex; align-items: center; gap: 0.5rem; padding: 1rem; border: 2px solid @(metadataSource == MetadataSource.Manual ? "#3b82f6" : "#e5e7eb"); border-radius: 0.5rem; cursor: pointer; background: @(metadataSource == MetadataSource.Manual ? "#eff6ff" : "white");">
+                                    <input type="radio" 
+                                           name="metadataSource" 
+                                           value="@MetadataSource.Manual" 
+                                           checked="@(metadataSource == MetadataSource.Manual)"
+                                           @onchange="@(() => metadataSource = MetadataSource.Manual)" />
+                                    <div>
+                                        <div style="font-weight: 600; color: #1e293b;">Manual Entry</div>
+                                        <div style="font-size: 0.875rem; color: #64748b;">Enter common metadata for all files</div>
+                                    </div>
+                                </label>
+                                <label style="display: flex; align-items: center; gap: 0.5rem; padding: 1rem; border: 2px solid @(metadataSource == MetadataSource.CsvFile ? "#3b82f6" : "#e5e7eb"); border-radius: 0.5rem; cursor: pointer; background: @(metadataSource == MetadataSource.CsvFile ? "#eff6ff" : "white");">
+                                    <input type="radio" 
+                                           name="metadataSource" 
+                                           value="@MetadataSource.CsvFile" 
+                                           checked="@(metadataSource == MetadataSource.CsvFile)"
+                                           @onchange="@(() => metadataSource = MetadataSource.CsvFile)" />
+                                    <div>
+                                        <div style="font-weight: 600; color: #1e293b;">CSV/Excel File</div>
+                                        <div style="font-size: 0.875rem; color: #64748b;">Map metadata from spreadsheet</div>
+                                    </div>
+                                </label>
+                            </div>
+                        </div>
+
+                        @if (metadataSource == MetadataSource.Manual)
+                        {
+                            <!-- Manual Metadata Entry -->
+                            <div style="background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 0.5rem; padding: 1.5rem;">
+                                <h4 style="margin: 0 0 1rem 0; color: #1e293b; font-weight: 600;">Common Metadata (Applied to All Files)</h4>
+                                <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem;">
+                                    <div>
+                                        <label style="display: block; font-weight: 500; color: #1e293b; margin-bottom: 0.5rem;">Document Type</label>
+                                        <input type="text" @bind="commonMetadata.DocumentType" class="lgreeny-input" placeholder="e.g., Technical Drawing" />
+                                    </div>
+                                    <div>
+                                        <label style="display: block; font-weight: 500; color: #1e293b; margin-bottom: 0.5rem;">Author</label>
+                                        <input type="text" @bind="commonMetadata.Author" class="lgreeny-input" placeholder="Author name" />
+                                    </div>
+                                    <div>
+                                        <label style="display: block; font-weight: 500; color: #1e293b; margin-bottom: 0.5rem;">Status</label>
+                                        <select @bind="commonMetadata.Status" class="lgreeny-input">
+                                            <option value="Draft">Draft</option>
+                                            <option value="Final">Final</option>
+                                            <option value="Approved">Approved</option>
+                                            <option value="Archived">Archived</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label style="display: block; font-weight: 500; color: #1e293b; margin-bottom: 0.5rem;">Classification</label>
+                                        <input type="text" @bind="commonMetadata.Classification" class="lgreeny-input" placeholder="e.g., Confidential" />
+                                    </div>
+                                    <div style="grid-column: 1 / -1;">
+                                        <label style="display: block; font-weight: 500; color: #1e293b; margin-bottom: 0.5rem;">Keywords</label>
+                                        <input type="text" @bind="commonMetadata.Keywords" class="lgreeny-input" placeholder="Comma-separated keywords" />
+                                    </div>
+                                </div>
+                            </div>
+                        }
+                        else
+                        {
+                            <!-- CSV File Upload -->
+                            <div style="background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 0.5rem; padding: 1.5rem;">
+                                <h4 style="margin: 0 0 1rem 0; color: #1e293b; font-weight: 600;">Upload Metadata CSV/Excel File</h4>
+                                <InputFile OnChange="HandleMetadataFileSelected" class="lgreeny-input" accept=".csv,.xlsx,.xls" />
+                                <div style="margin-top: 1rem; padding: 0.75rem; background: #fef3c7; border: 1px solid #fde047; border-radius: 0.375rem; font-size: 0.875rem; color: #1e293b;">
+                                    <strong>Expected columns:</strong> FileName, DocumentNumber, Title, Author, DocumentType, Status, Classification, Keywords
+                                </div>
+                                @if (metadataFile != null)
+                                {
+                                    <div style="margin-top: 1rem; padding: 0.75rem; background: #d1fae5; border: 1px solid #6ee7b7; border-radius: 0.375rem;">
+                                        <span style="color: #065f46; font-weight: 600;"> File selected: @metadataFile.Name</span>
+                                    </div>
+                                }
+                            </div>
+                        }
+                    </div>
+                </div>
+            </div>
+
+            <!-- File Preview Table -->
+            <div class="lgreeny-panel" style="margin-bottom: 1.5rem;">
+                <div class="panel-header">
+                    <h3 class="panel-title"><Icon Name="file" Size="20" /> Files to Import (@scannedFiles.Count)</h3>
+                </div>
+                <div class="panel-body">
+                    <div style="max-height: 400px; overflow-y: auto;">
+                        <table style="width: 100%; border-collapse: collapse;">
+                            <thead style="position: sticky; top: 0; background: #f8fafc; z-index: 10;">
+                                <tr>
+                                    <th style="padding: 0.75rem; text-align: left; border-bottom: 2px solid #e2e8f0; font-weight: 600; color: #1e293b;">File Name</th>
+                                    <th style="padding: 0.75rem; text-align: left; border-bottom: 2px solid #e2e8f0; font-weight: 600; color: #1e293b;">Size</th>
+                                    <th style="padding: 0.75rem; text-align: left; border-bottom: 2px solid #e2e8f0; font-weight: 600; color: #1e293b;">Type</th>
+                                    <th style="padding: 0.75rem; text-align: left; border-bottom: 2px solid #e2e8f0; font-weight: 600; color: #1e293b;">Document #</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var file in scannedFiles)
+                                {
+                                    <tr style="border-bottom: 1px solid #e2e8f0;">
+                                        <td style="padding: 0.75rem; color: #1e293b;">@file.Name</td>
+                                        <td style="padding: 0.75rem; color: #64748b;">@FormatFileSize(file.Length)</td>
+                                        <td style="padding: 0.75rem; color: #64748b;">@Path.GetExtension(file.Name).TrimStart('.').ToUpper()</td>
+                                        <td style="padding: 0.75rem; color: #3b82f6;">DOC-@(scannedFiles.IndexOf(file) + 1).ToString("D4")</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Import Action -->
+            <div class="lgreeny-panel">
+                <div class="panel-body">
+                    @if (!string.IsNullOrEmpty(importErrorMessage))
+                    {
+                        <div style="padding: 1rem; background: #fee2e2; border: 1px solid #fecaca; border-radius: 0.5rem; margin-bottom: 1rem; color: #991b1b;">
+                            <Icon Name="alert-circle" Size="16" /> @importErrorMessage
+                        </div>
+                    }
+
+                    @if (!string.IsNullOrEmpty(importSuccessMessage))
+                    {
+                        <div style="padding: 1rem; background: #d1fae5; border: 1px solid #6ee7b7; border-radius: 0.5rem; margin-bottom: 1rem; color: #065f46;">
+                            <Icon Name="check-circle" Size="16" /> @importSuccessMessage
+                        </div>
+                    }
+
+                    @if (isImporting)
+                    {
+                        <div style="padding: 2rem; text-align: center;">
+                            <div style="color: #3b82f6; font-size: 3rem; margin-bottom: 1rem;"><Icon Name="loader" Size="48" Color="#3b82f6" /></div>
+                            <h3 style="color: #1e293b; margin-bottom: 0.5rem;">Importing Documents...</h3>
+                            <p style="color: #64748b;">Processing @importProgress / @scannedFiles.Count files</p>
+                            <div style="width: 100%; max-width: 600px; margin: 1rem auto; background: #e5e7eb; border-radius: 0.5rem; height: 0.5rem; overflow: hidden;">
+                                <div style="width: @((importProgress * 100.0 / scannedFiles.Count))%; background: #3b82f6; height: 100%; transition: width 0.3s;"></div>
+                            </div>
+                        </div>
+                    }
+                    else
+                    {
+                        <div style="display: flex; gap: 1rem; justify-content: space-between; align-items: center;">
+                            <div>
+                                <h4 style="margin: 0 0 0.25rem 0; color: #1e293b;">Ready to import @scannedFiles.Count file(s)</h4>
+                                <p style="margin: 0; color: #64748b; font-size: 0.875rem;">
+                                    Files will be uploaded to: <strong>@selectedProject.ProjectName</strong>
+                                </p>
+                            </div>
+                            <button class="lgreeny-btn-primary" 
+                                    @onclick="StartBulkImport" 
+                                    disabled="@(!scannedFiles.Any())"
+                                    style="padding: 1rem 2rem; font-size: 1rem;">
+                                <Icon Name="upload" Size="16" /> Start Bulk Import
+                            </button>
+                        </div>
+                    }
+                </div>
+            </div>
+        }
+    }
+</div>
+
+<style>
+    .lgreeny-input {
+        width: 100%;
+        padding: 0.75rem;
+        border: 2px solid #e5e7eb;
+        border-radius: 0.5rem;
+        font-size: 1rem;
+        transition: all 0.2s;
+    }
+
+    .lgreeny-input:focus {
+        outline: none;
+        border-color: #3b82f6;
+        box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+    }
+
+    .lgreeny-input:disabled {
+        background: #f3f4f6;
+        cursor: not-allowed;
+        opacity: 0.6;
+    }
+
+    .panel-header {
+        padding: 1rem 1.5rem;
+        border-bottom: 1px solid #e2e8f0;
+    }
+
+    .panel-title {
+        margin: 0;
+        font-size: 1.125rem;
+        font-weight: 600;
+        color: #1e293b;
+    }
+
+    .panel-body {
+        padding: 1.5rem;
+    }
+</style>
+
+@code {
+    // Project selection
+    private int selectedProjectId = 0;
+    private Project? selectedProject;
+    private IEnumerable<Project>? allProjects;
+    private bool isLoadingProjects = false;
+    private string? projectErrorMessage;
+
+    // Directory scanning
+    private string sourceDirectory = string.Empty;
+    private List<FileInfo> scannedFiles = new();
+    private bool isScanning = false;
+    private string? scanErrorMessage;
+
+    // Metadata configuration
+    private MetadataSource metadataSource = MetadataSource.Manual;
+    private CommonMetadata commonMetadata = new();
+    private IBrowserFile? metadataFile;
+
+    // Import process
+    private bool isImporting = false;
+    private int importProgress = 0;
+    private string? importErrorMessage;
+    private string? importSuccessMessage;
+
+    private enum MetadataSource
+    {
+        Manual,
+        CsvFile
+    }
+
+    private class CommonMetadata
+    {
+        public string DocumentType { get; set; } = "Document";
+        public string Author { get; set; } = string.Empty;
+        public string Status { get; set; } = "Draft";
+        public string Classification { get; set; } = string.Empty;
+        public string Keywords { get; set; } = string.Empty;
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadProjects();
+    }
+
+    private async Task LoadProjects()
+    {
+        isLoadingProjects = true;
+        projectErrorMessage = null;
+
+        try
+        {
+            // Get the current authenticated user
+            var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+            var username = authState.User?.Identity?.Name;
+            
+            if (string.IsNullOrEmpty(username))
+            {
+                projectErrorMessage = "No authenticated user found";
+                allProjects = Enumerable.Empty<Project>();
+                return;
+            }
+
+            using var securityContext = await SecurityDbContextFactory.CreateDbContextAsync();
+            
+            // Get the user
+            var user = await securityContext.Users
+                .FirstOrDefaultAsync(u => u.Username == username);
+            
+            if (user == null)
+            {
+                projectErrorMessage = $"User not found: {username}";
+                allProjects = Enumerable.Empty<Project>();
+                return;
+            }
+
+            // Get project IDs where the user has the Editor role
+            var editorProjectIds = await securityContext.UserProjectRoles
+                .Where(upr => upr.UserId == user.UserId && upr.IsActive)
+                .Include(upr => upr.ProjectRole)
+                    .ThenInclude(pr => pr!.ApplicationRole)
+                .Where(upr => upr.ProjectRole!.ApplicationRole!.Name == "Editor")
+                .Select(upr => upr.ProjectRole!.ProjectId)
+                .Distinct()
+                .ToListAsync();
+            
+            if (editorProjectIds.Count == 0)
+            {
+                projectErrorMessage = "No projects available. You do not have Editor role assignments for any projects.";
+                allProjects = Enumerable.Empty<Project>();
+                return;
+            }
+
+            // Get the actual Project entities from DbContext
+            allProjects = await DbContext.Projects
+                .Where(p => editorProjectIds.Contains(p.ProjectId))
+                .OrderBy(p => p.ProjectName)
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            projectErrorMessage = $"Error loading projects: {ex.Message}";
+            allProjects = Enumerable.Empty<Project>();
+            Logger.LogError(ex, "Error loading projects for bulk import");
+        }
+        finally
+        {
+            isLoadingProjects = false;
+        }
+    }
+
+    private async Task OnProjectSelected()
+    {
+        if (selectedProjectId > 0)
+        {
+            selectedProject = allProjects?.FirstOrDefault(p => p.ProjectId == selectedProjectId);
+        }
+        else
+        {
+            selectedProject = null;
+        }
+        
+        // Reset scan results when project changes
+        scannedFiles.Clear();
+        scanErrorMessage = null;
+        importErrorMessage = null;
+        importSuccessMessage = null;
+        
+        await Task.CompletedTask;
+    }
+
+    private async Task ScanDirectory()
+    {
+        if (string.IsNullOrWhiteSpace(sourceDirectory))
+        {
+            scanErrorMessage = "Please enter a directory path";
+            return;
+        }
+
+        isScanning = true;
+        scanErrorMessage = null;
+        scannedFiles.Clear();
+
+        try
+        {
+            await Task.Run(() =>
+            {
+                if (!Directory.Exists(sourceDirectory))
+                {
+                    scanErrorMessage = $"Directory not found: {sourceDirectory}";
+                    return;
+                }
+
+                var allowedExtensions = new[] { ".pdf", ".tif", ".tiff", ".jpg", ".jpeg", ".png", ".bmp", ".gif" };
+                var directory = new DirectoryInfo(sourceDirectory);
+                
+                var files = directory.GetFiles()
+                    .Where(f => allowedExtensions.Contains(f.Extension.ToLower()))
+                    .Where(f => f.Length <= 50 * 1024 * 1024) // 50MB limit
+                    .OrderBy(f => f.Name)
+                    .ToList();
+
+                if (!files.Any())
+                {
+                    scanErrorMessage = "No supported document files found in the directory (PDF, TIF, TIFF, JPG, JPEG, PNG, BMP, GIF)";
+                    return;
+                }
+
+                scannedFiles = files;
+            });
+        }
+        catch (UnauthorizedAccessException)
+        {
+            scanErrorMessage = "Access denied. Please check directory permissions.";
+        }
+        catch (Exception ex)
+        {
+            scanErrorMessage = $"Error scanning directory: {ex.Message}";
+            Logger.LogError(ex, "Error scanning directory {Directory}", sourceDirectory);
+        }
+        finally
+        {
+            isScanning = false;
+        }
+    }
+
+    private void HandleMetadataFileSelected(InputFileChangeEventArgs e)
+    {
+        metadataFile = e.File;
+    }
+
+    private async Task StartBulkImport()
+    {
+        if (!scannedFiles.Any() || selectedProject == null)
+        {
+            return;
+        }
+
+        isImporting = true;
+        importProgress = 0;
+        importErrorMessage = null;
+        importSuccessMessage = null;
+
+        try
+        {
+            // Resolve current user ID
+            var currentUserId = await ResolveCurrentUserIdAsync();
+
+            foreach (var fileInfo in scannedFiles)
+            {
+                try
+                {
+                    // Generate document number
+                    var documentNumber = $"DOC-{scannedFiles.IndexOf(fileInfo) + 1:D4}";
+
+                    // Create document in database
+                    var documentId = await CreateDocumentAsync(
+                        selectedProject.SchemaName,
+                        documentNumber,
+                        fileInfo.Name,
+                        currentUserId
+                    );
+
+                    // Read file and upload as page
+                    var fileBytes = await File.ReadAllBytesAsync(fileInfo.FullName);
+                    await UploadPageAsync(
+                        selectedProject.SchemaName,
+                        documentId,
+                        1, // Page number
+                        fileInfo.Name,
+                        fileBytes,
+                        fileInfo.Extension,
+                        currentUserId
+                    );
+
+                    importProgress++;
+                    StateHasChanged();
+                }
+                catch (Exception ex)
+                {
+                    Logger.LogError(ex, "Error importing file {FileName}", fileInfo.Name);
+                    // Continue with next file
+                }
+            }
+
+            importSuccessMessage = $"Successfully imported {importProgress} out of {scannedFiles.Count} documents!";
+            
+            // Reset after success
+            await Task.Delay(3000);
+            scannedFiles.Clear();
+            sourceDirectory = string.Empty;
+        }
+        catch (Exception ex)
+        {
+            importErrorMessage = $"Error during bulk import: {ex.Message}";
+            Logger.LogError(ex, "Error during bulk import");
+        }
+        finally
+        {
+            isImporting = false;
+        }
+    }
+
+    private async Task<int> CreateDocumentAsync(string schemaName, string documentNumber, string title, int createdBy)
+    {
+        var sql = $@"
+            INSERT INTO [{schemaName}].[Document] 
+            (ProjectId, DocumentNumber, Title, Author, DocumentType, Status, Classification, Keywords, CreatedOn, CreatedBy)
+            OUTPUT INSERTED.DocumentId
+            VALUES (@p0, @p1, @p2, @p3, @p4, @p5, @p6, @p7, @p8, @p9)";
+
+        var parameters = new object[]
+        {
+            selectedProject!.ProjectId,
+            documentNumber,
+            Path.GetFileNameWithoutExtension(title),
+            commonMetadata.Author ?? "",
+            commonMetadata.DocumentType ?? "Document",
+            commonMetadata.Status ?? "Draft",
+            commonMetadata.Classification ?? "",
+            commonMetadata.Keywords ?? "",
+            DateTime.UtcNow,
+            createdBy
+        };
+
+        var result = await DbContext.Database.SqlQueryRaw<int>(sql, parameters).ToListAsync();
+        return result.FirstOrDefault();
+    }
+
+    private async Task UploadPageAsync(string schemaName, int documentId, int pageNumber, string fileName, byte[] fileData, string extension, int createdBy)
+    {
+        // Calculate MD5 checksum
+        string checksum;
+        using (var md5 = System.Security.Cryptography.MD5.Create())
+        {
+            var hashBytes = md5.ComputeHash(fileData);
+            checksum = BitConverter.ToString(hashBytes).Replace("-", "").ToLowerInvariant();
+        }
+
+        var contentType = extension.ToLower() switch
+        {
+            ".pdf" => "application/pdf",
+            ".tif" or ".tiff" => "image/tiff",
+            ".jpg" or ".jpeg" => "image/jpeg",
+            ".png" => "image/png",
+            ".bmp" => "image/bmp",
+            ".gif" => "image/gif",
+            _ => "application/octet-stream"
+        };
+
+        var sql = $@"
+            INSERT INTO [{schemaName}].[DocumentPage]
+            (DocumentId, PageNumber, FileData, FileSize, ContentType, Checksum, CreatedOn, CreatedBy)
+            VALUES (@p0, @p1, @p2, @p3, @p4, @p5, @p6, @p7)";
+
+        await DbContext.Database.ExecuteSqlRawAsync(
+            sql,
+            documentId,
+            pageNumber,
+            fileData,
+            fileData.Length,
+            contentType,
+            checksum,
+            DateTime.UtcNow,
+            createdBy
+        );
+    }
+
+    private async Task<int> ResolveCurrentUserIdAsync()
+    {
+        try
+        {
+            var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+            var username = authState.User?.Identity?.Name;
+            if (!string.IsNullOrEmpty(username))
+            {
+                using var secCtx = await SecurityDbContextFactory.CreateDbContextAsync();
+                var user = await secCtx.Users.FirstOrDefaultAsync(u => u.Username == username);
+                if (user != null)
+                    return user.UserId;
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Unable to resolve user ID");
+        }
+
+        return 0;
+    }
+
+    private string FormatFileSize(long bytes)
+    {
+        string[] sizes = { "B", "KB", "MB", "GB" };
+        double len = bytes;
+        int order = 0;
+        while (len >= 1024 && order < sizes.Length - 1)
+        {
+            order++;
+            len = len / 1024;
+        }
+        return $"{len:0.##} {sizes[order]}";
+    }
+
+    private void GoBackToDashboard()
+    {
+        Navigation.NavigateTo("/editor/dashboard");
+    }
+}

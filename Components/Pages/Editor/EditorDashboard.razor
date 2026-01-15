@@ -1,0 +1,434 @@
+﻿@page "/editor/dashboard"
+@attribute [RoleBasedAuthorization("Editor")]
+@using DV.Shared.Security
+@using DV.Shared.Models
+@using DV.Web.Services
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.AspNetCore.Components.Authorization
+@inject NavigationManager Navigation
+@inject IJSRuntime JSRuntime
+@inject IDbContextFactory<AppDbContext> DbContextFactory
+@inject IDbContextFactory<SecurityDbContext> SecurityDbContextFactory
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@rendermode InteractiveServer
+
+<PageTitle>Editor Dashboard - DocViewer Proto</PageTitle>
+
+<div class="lgreeny-dashboard">
+    <!-- Page Header -->
+    <div style="margin-bottom: 1.5rem;">
+        <h1 style="margin: 0; font-size: 1.75rem; font-weight: 600; color: #1e293b;">Editor Dashboard</h1>
+        <p style="margin: 0.5rem 0 0 0; font-size: 0.875rem; color: #64748b;">Content management and document editing workspace</p>
+    </div>
+
+    <!-- Project Selection Stats -->
+    <div class="lgreeny-stats-row" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); margin-bottom: 1.5rem;">
+        <div class="lgreeny-stat-card" style="padding: 0.75rem;">
+            <div class="stat-header" style="margin-bottom: 0.5rem;">
+                <span class="stat-title" style="font-size: 0.7rem;">Total Projects</span>
+                <span class="stat-icon blue" style="width: 1.5rem; height: 1.5rem;"><Icon Name="folder" Size="12" Color="white" /></span>
+            </div>
+            <div class="stat-value" style="font-size: 1.25rem; margin-bottom: 0.25rem;">@allProjects.Count</div>
+            <div class="stat-change">
+                <span class="stat-period" style="font-size: 0.7rem;">Available</span>
+            </div>
+        </div>
+
+        <div class="lgreeny-stat-card" style="padding: 0.75rem;">
+            <div class="stat-header" style="margin-bottom: 0.5rem;">
+                <span class="stat-title" style="font-size: 0.7rem;">Selected Project</span>
+                <span class="stat-icon @(selectedProject != null ? "teal" : "purple")" style="width: 1.5rem; height: 1.5rem;">
+                    @if (selectedProject != null)
+                    {
+                        <Icon Name="check-circle" Size="12" Color="white" />
+                    }
+                    else
+                    {
+                        <Icon Name="alert-circle" Size="12" Color="white" />
+                    }
+                </span>
+            </div>
+            <div class="stat-value" style="font-size: @(selectedProject != null ? "0.9rem" : "1.25rem"); margin-bottom: 0.25rem;">
+                @if (selectedProject != null)
+                {
+                    @selectedProject.ProjectName
+                }
+                else
+                {
+                    <span>None</span>
+                }
+            </div>
+            <div class="stat-change">
+                <span class="stat-period" style="font-size: 0.7rem;">@(selectedProject != null ? "Active" : "Not Selected")</span>
+            </div>
+        </div>
+
+        <div class="lgreeny-stat-card" style="padding: 0.75rem;">
+            <div class="stat-header" style="margin-bottom: 0.5rem;">
+                <span class="stat-title" style="font-size: 0.7rem;">Features</span>
+                <span class="stat-icon blue" style="width: 1.5rem; height: 1.5rem;"><Icon Name="grid" Size="12" Color="white" /></span>
+            </div>
+            <div class="stat-value" style="font-size: 1.25rem; margin-bottom: 0.25rem;">4</div>
+            <div class="stat-change">
+                <span class="stat-period" style="font-size: 0.7rem;">@(selectedProject != null ? "Enabled" : "Locked")</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Project Selection Panel -->
+    <div class="lgreeny-panel" style="margin-bottom: 1.5rem;">
+        <div class="panel-header">
+            <div>
+                <h3 class="panel-title" style="display: flex; align-items: center; gap: 0.5rem;">
+                    <Icon Name="folder" Size="20" />
+                    <span>Project Selection</span>
+                </h3>
+                <p style="margin: 0.25rem 0 0 0; font-size: 0.875rem; color: #94a3b8;">Choose a project to access editing tools</p>
+            </div>
+        </div>
+        <div class="panel-body">
+            <div style="display: flex; gap: 1rem; align-items: end;">
+                <div style="flex: 1; max-width: 500px;">
+                    <label style="display: block; font-size: 0.875rem; font-weight: 500; color: #334155; margin-bottom: 0.5rem;">
+                        Search Project / Schema
+                    </label>
+                    <div style="position: relative;">
+                        <input type="text" 
+                               class="form-control" 
+                               placeholder="Search projects..." 
+                               @bind="searchText"
+                               @bind:event="oninput"
+                               @onfocus="ShowDropdown"
+                               style="padding-left: 2.5rem; height: 2.75rem; border: 2px solid #e2e8f0; border-radius: 0.5rem; font-size: 0.875rem;"
+                               disabled="@isLoading" />
+                        <span style="position: absolute; left: 0.875rem; top: 50%; transform: translateY(-50%);">
+                            <Icon Name="search" Size="16" Color="#94a3b8" />
+                        </span>
+                        
+                        @if (showDropdown && filteredProjects.Any())
+                        {
+                            <div style="position: absolute; top: 100%; left: 0; right: 0; margin-top: 0.5rem; background: white; border: 1px solid #e2e8f0; border-radius: 0.5rem; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1); max-height: 300px; overflow-y: auto; z-index: 1000;">
+                                @foreach (var project in filteredProjects.Take(10))
+                                {
+                                    <div @onclick="@(() => SelectProject(project))"
+                                         style="padding: 0.75rem 1rem; cursor: pointer; border-bottom: 1px solid #f1f5f9; transition: background-color 0.15s;"
+                                         class="project-dropdown-item">
+                                        <div style="display: flex; align-items: center; gap: 0.75rem;">
+                                            <Icon Name="folder" Size="16" Color="#0ea5e9" />
+                                            <div style="flex: 1;">
+                                                <div style="font-weight: 500; color: #1e293b; font-size: 0.875rem;">@project.ProjectName</div>
+                                                @if (!string.IsNullOrEmpty(project.Description))
+                                                {
+                                                    <div style="font-size: 0.75rem; color: #64748b; margin-top: 0.125rem;">@project.Description</div>
+                                                }
+                                            </div>
+                                        </div>
+                                    </div>
+                                }
+                            </div>
+                        }
+                    </div>
+                </div>
+                
+                @if (selectedProject != null)
+                {
+                    <button class="btn btn-outline-secondary" 
+                            @onclick="ClearSelection"
+                            style="height: 2.75rem; padding: 0 1.25rem; border-radius: 0.5rem; font-size: 0.875rem; font-weight: 500;">
+                        <span style="display: inline-block; vertical-align: text-bottom; margin-right: 0.25rem;">
+                            <Icon Name="x" Size="16" />
+                        </span>
+                        Clear
+                    </button>
+                }
+            </div>
+            
+            @if (selectedProject != null)
+            {
+                <div style="margin-top: 1rem; padding: 1rem; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 0.5rem;">
+                    <div style="display: flex; align-items: center; gap: 0.75rem;">
+                        <Icon Name="check-circle" Size="20" Color="#16a34a" />
+                        <div>
+                            <div style="font-weight: 600; color: #166534; font-size: 0.875rem;">@selectedProject.ProjectName</div>
+                            @if (!string.IsNullOrEmpty(selectedProject.Description))
+                            {
+                                <div style="font-size: 0.75rem; color: #15803d; margin-top: 0.125rem;">@selectedProject.Description</div>
+                            }
+                        </div>
+                    </div>
+                </div>
+            }
+        </div>
+    </div>
+
+    <!-- Document Management -->
+    <div class="lgreeny-panel" style="margin-bottom: 1.5rem;">
+        <div class="panel-header">
+            <div>
+                <h3 class="panel-title" style="display: flex; align-items: center; gap: 0.5rem;">
+                    <Icon Name="file-text" Size="20" />
+                    <span>Document Management</span>
+                </h3>
+                <p style="margin: 0.25rem 0 0 0; font-size: 0.875rem; color: #94a3b8;">Browse, edit, and manage documents</p>
+            </div>
+        </div>
+        <div class="panel-body">
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1rem;">
+                <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 0.5rem; padding: 1.25rem; cursor: @(selectedProject == null ? "not-allowed" : "pointer"); opacity: @(selectedProject == null ? "0.6" : "1"); transition: all 0.2s;" 
+                     @onclick="@(() => NavigateToFeature("/editor/files"))"
+                     onmouseenter="@(selectedProject != null ? "this.style.borderColor='#3b82f6'; this.style.boxShadow='0 4px 6px -1px rgba(59, 130, 246, 0.1)'" : "")"
+                     onmouseleave="@(selectedProject != null ? "this.style.borderColor='#e2e8f0'; this.style.boxShadow='none'" : "")">
+                    <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 0.75rem;">
+                        <Icon Name="file-text" Size="32" Color="#3b82f6" />
+                        @if (selectedProject != null)
+                        {
+                            <span style="background: #dbeafe; color: #1e40af; padding: 0.25rem 0.625rem; border-radius: 0.25rem; font-size: 0.75rem; font-weight: 600;">Active</span>
+                        }
+                        else
+                        {
+                            <span style="background: #f1f5f9; color: #64748b; padding: 0.25rem 0.625rem; border-radius: 0.25rem; font-size: 0.75rem; font-weight: 600;">Locked</span>
+                        }
+                    </div>
+                    <h4 style="margin: 0 0 0.5rem 0; font-size: 1rem; font-weight: 600; color: #1e293b;">List/Edit Files</h4>
+                    <p style="margin: 0; font-size: 0.875rem; color: #64748b;">Browse, search, and edit documents</p>
+                </div>
+
+                <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 0.5rem; padding: 1.25rem; cursor: @(selectedProject == null ? "not-allowed" : "pointer"); opacity: @(selectedProject == null ? "0.6" : "1"); transition: all 0.2s;" 
+                     @onclick="@(() => NavigateToFeature("/editor/import"))"
+                     onmouseenter="@(selectedProject != null ? "this.style.borderColor='#3b82f6'; this.style.boxShadow='0 4px 6px -1px rgba(59, 130, 246, 0.1)'" : "")"
+                     onmouseleave="@(selectedProject != null ? "this.style.borderColor='#e2e8f0'; this.style.boxShadow='none'" : "")">
+                    <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 0.75rem;">
+                        <Icon Name="upload" Size="32" Color="#8b5cf6" />
+                        @if (selectedProject != null)
+                        {
+                            <span style="background: #ede9fe; color: #6b21a8; padding: 0.25rem 0.625rem; border-radius: 0.25rem; font-size: 0.75rem; font-weight: 600;">Active</span>
+                        }
+                        else
+                        {
+                            <span style="background: #f1f5f9; color: #64748b; padding: 0.25rem 0.625rem; border-radius: 0.25rem; font-size: 0.75rem; font-weight: 600;">Locked</span>
+                        }
+                    </div>
+                    <h4 style="margin: 0 0 0.5rem 0; font-size: 1rem; font-weight: 600; color: #1e293b;">Bulk Import</h4>
+                    <p style="margin: 0; font-size: 0.875rem; color: #64748b;">Import multiple documents with metadata</p>
+                </div>
+
+                <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 0.5rem; padding: 1.25rem; cursor: @(selectedProject == null ? "not-allowed" : "pointer"); opacity: @(selectedProject == null ? "0.6" : "1"); transition: all 0.2s;" 
+                     @onclick="@(() => NavigateToFeature("/editor/export"))"
+                     onmouseenter="@(selectedProject != null ? "this.style.borderColor='#3b82f6'; this.style.boxShadow='0 4px 6px -1px rgba(59, 130, 246, 0.1)'" : "")"
+                     onmouseleave="@(selectedProject != null ? "this.style.borderColor='#e2e8f0'; this.style.boxShadow='none'" : "")">
+                    <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 0.75rem;">
+                        <Icon Name="download" Size="32" Color="#14b8a6" />
+                        @if (selectedProject != null)
+                        {
+                            <span style="background: #ccfbf1; color: #115e59; padding: 0.25rem 0.625rem; border-radius: 0.25rem; font-size: 0.75rem; font-weight: 600;">Active</span>
+                        }
+                        else
+                        {
+                            <span style="background: #f1f5f9; color: #64748b; padding: 0.25rem 0.625rem; border-radius: 0.25rem; font-size: 0.75rem; font-weight: 600;">Locked</span>
+                        }
+                    </div>
+                    <h4 style="margin: 0 0 0.5rem 0; font-size: 1rem; font-weight: 600; color: #1e293b;">Export Files</h4>
+                    <p style="margin: 0; font-size: 0.875rem; color: #64748b;">Export documents and datasets</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Access Control -->
+    <div class="lgreeny-panel" style="margin-bottom: 1.5rem;">
+        <div class="panel-header">
+            <div>
+                <h3 class="panel-title" style="display: flex; align-items: center; gap: 0.5rem;">
+                    <Icon Name="users" Size="20" />
+                    <span>Access Control</span>
+                </h3>
+                <p style="margin: 0.25rem 0 0 0; font-size: 0.875rem; color: #94a3b8;">Manage user access and permissions</p>
+            </div>
+        </div>
+        <div class="panel-body">
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1rem;">
+                <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 0.5rem; padding: 1.25rem; cursor: @(selectedProject == null ? "not-allowed" : "pointer"); opacity: @(selectedProject == null ? "0.6" : "1"); transition: all 0.2s;" 
+                     @onclick="@(() => NavigateToFeature("/editor/access"))"
+                     onmouseenter="@(selectedProject != null ? "this.style.borderColor='#3b82f6'; this.style.boxShadow='0 4px 6px -1px rgba(59, 130, 246, 0.1)'" : "")"
+                     onmouseleave="@(selectedProject != null ? "this.style.borderColor='#e2e8f0'; this.style.boxShadow='none'" : "")">
+                    <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 0.75rem;">
+                        <Icon Name="users" Size="32" Color="#f59e0b" />
+                        @if (selectedProject != null)
+                        {
+                            <span style="background: #fef3c7; color: #92400e; padding: 0.25rem 0.625rem; border-radius: 0.25rem; font-size: 0.75rem; font-weight: 600;">Active</span>
+                        }
+                        else
+                        {
+                            <span style="background: #f1f5f9; color: #64748b; padding: 0.25rem 0.625rem; border-radius: 0.25rem; font-size: 0.75rem; font-weight: 600;">Locked</span>
+                        }
+                    </div>
+                    <h4 style="margin: 0 0 0.5rem 0; font-size: 1rem; font-weight: 600; color: #1e293b;">User Access Management</h4>
+                    <p style="margin: 0; font-size: 0.875rem; color: #64748b;">Manage ReadOnly user permissions</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    @if (selectedProject == null)
+    {
+        <div style="margin-top: 1.5rem; padding: 1.25rem; background: #fef3c7; border: 1px solid #fde047; border-radius: 0.5rem; display: flex; align-items: center; gap: 0.75rem;">
+            <Icon Name="info" Size="20" Color="#ca8a04" />
+            <div>
+                <div style="color: #92400e; font-size: 0.875rem; font-weight: 600; margin-bottom: 0.25rem;">No Project Selected</div>
+                <div style="color: #92400e; font-size: 0.8125rem;">Please select a project above to enable editing tools and features</div>
+            </div>
+        </div>
+    }
+</div>
+
+<style>
+    .project-dropdown-item:hover {
+        background-color: #f8fafc !important;
+    }
+    
+    .project-dropdown-item:last-child {
+        border-bottom: none !important;
+    }
+</style>
+
+@code {
+    private bool isLoading = true;
+    private string searchText = string.Empty;
+    private bool showDropdown = false;
+    private Project? selectedProject = null;
+    private List<Project> allProjects = new();
+    private List<Project> filteredProjects = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadProjects();
+        isLoading = false;
+    }
+
+    private async Task LoadProjects()
+    {
+        try
+        {
+            // Get the current authenticated user
+            var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+            var username = authState.User?.Identity?.Name;
+            
+            if (string.IsNullOrEmpty(username))
+            {
+                Console.WriteLine("No authenticated user found");
+                return;
+            }
+
+            using var securityContext = await SecurityDbContextFactory.CreateDbContextAsync();
+            using var appContext = await DbContextFactory.CreateDbContextAsync();
+            
+            // Get the user
+            var user = await securityContext.Users
+                .FirstOrDefaultAsync(u => u.Username == username);
+            
+            if (user == null)
+            {
+                Console.WriteLine($"User not found: {username}");
+                return;
+            }
+
+            // Get project IDs where the user has the Editor role
+            // Query: UserProjectRole -> ProjectRole -> ApplicationRole (where Name = "Editor")
+            var editorProjectIds = await securityContext.UserProjectRoles
+                .Where(upr => upr.UserId == user.UserId && upr.IsActive)
+                .Include(upr => upr.ProjectRole)
+                    .ThenInclude(pr => pr!.ApplicationRole)
+                .Where(upr => upr.ProjectRole!.ApplicationRole!.Name == "Editor")
+                .Select(upr => upr.ProjectRole!.ProjectId)
+                .Distinct()
+                .ToListAsync();
+            
+            if (editorProjectIds.Count == 0)
+            {
+                Console.WriteLine($"User {username} has no Editor role assignments");
+                allProjects = new List<Project>();
+                filteredProjects = new List<Project>();
+                return;
+            }
+
+            // Get the actual Project entities from AppDbContext
+            allProjects = await appContext.Projects
+                .Where(p => editorProjectIds.Contains(p.ProjectId))
+                .OrderBy(p => p.ProjectName)
+                .ToListAsync();
+            
+            filteredProjects = allProjects;
+            
+            Console.WriteLine($"Loaded {allProjects.Count} projects for user {username} with Editor role");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading projects: {ex.Message}");
+            Console.WriteLine($"Stack trace: {ex.StackTrace}");
+            await JSRuntime.InvokeVoidAsync("console.error", "Failed to load projects", ex.Message);
+        }
+    }
+
+    private void ShowDropdown()
+    {
+        showDropdown = true;
+        FilterProjects();
+    }
+
+    private void FilterProjects()
+    {
+        if (string.IsNullOrWhiteSpace(searchText))
+        {
+            filteredProjects = allProjects;
+        }
+        else
+        {
+            var search = searchText.ToLower();
+            filteredProjects = allProjects
+                .Where(p => 
+                    p.ProjectName.ToLower().Contains(search) ||
+                    (p.Description != null && p.Description.ToLower().Contains(search)))
+                .ToList();
+        }
+        StateHasChanged();
+    }
+
+    private void SelectProject(Project project)
+    {
+        selectedProject = project;
+        searchText = project.ProjectName;
+        showDropdown = false;
+        StateHasChanged();
+    }
+
+    private void ClearSelection()
+    {
+        selectedProject = null;
+        searchText = string.Empty;
+        FilterProjects();
+        StateHasChanged();
+    }
+
+    private void NavigateToFeature(string path)
+    {
+        if (selectedProject == null)
+        {
+            return;
+        }
+
+        // Store selected project ID in session storage for the feature pages
+        JSRuntime.InvokeVoidAsync("sessionStorage.setItem", "selectedProjectId", selectedProject.ProjectId.ToString());
+        Navigation.NavigateTo(path);
+    }
+
+    // Handle search text changes
+    private string SearchText
+    {
+        get => searchText;
+        set
+        {
+            searchText = value;
+            FilterProjects();
+        }
+    }
+}

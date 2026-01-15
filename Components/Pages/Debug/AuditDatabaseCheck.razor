@@ -1,0 +1,533 @@
+﻿#if DEBUG
+@page "/debug/audit-database-check"
+@using DV.Shared.Security
+@using Microsoft.EntityFrameworkCore
+@inject SecurityDbContext SecurityContext
+@inject ILogger<AuditDatabaseCheck> Logger
+@inject IJSRuntime JSRuntime
+@rendermode InteractiveServer
+
+<PageTitle>Audit Database Check</PageTitle>
+
+<div class="container mt-4">
+    <div class="card">
+        <div class="card-header bg-info text-white">
+            <h4 class="mb-0">Audit Database Verification</h4>
+            <small>This page checks if the audit logging database is properly set up</small>
+        </div>
+        <div class="card-body">
+            @if (isLoading)
+            {
+                <div class="text-center">
+                    <div class="spinner-border text-primary" role="status"></div>
+                    <p class="mt-2">Checking audit database...</p>
+                </div>
+            }
+            else
+            {
+                <div class="row">
+                    <div class="col-md-6">
+                        <h5>Database Table Check</h5>
+                        <div class="list-group mb-3">
+                            <div class="list-group-item d-flex justify-content-between align-items-center">
+                                <span>AuditLog Table Exists</span>
+                                <span class="badge @(tableExists ? "bg-success" : "bg-danger")">
+                                    @(tableExists ? "YES" : "NO")
+                                </span>
+                            </div>
+                            <div class="list-group-item d-flex justify-content-between align-items-center">
+                                <span>Table Accessible via EF</span>
+                                <span class="badge @(tableAccessible ? "bg-success" : "bg-danger")">
+                                    @(tableAccessible ? "YES" : "NO")
+                                </span>
+                            </div>
+                            <div class="list-group-item d-flex justify-content-between align-items-center">
+                                <span>Can Insert Test Record</span>
+                                <span class="badge @(canInsertTest ? "bg-success" : "bg-danger")">
+                                    @(canInsertTest ? "YES" : "NO")
+                                </span>
+                            </div>
+                            <div class="list-group-item d-flex justify-content-between align-items-center">
+                                <span>Existing Audit Logs</span>
+                                <span class="badge bg-info">@auditLogCount</span>
+                            </div>
+                        </div>
+
+                        <h5>Migration Status</h5>
+                        <div class="list-group mb-3">
+                            <div class="list-group-item d-flex justify-content-between align-items-center">
+                                <span>Database Can Connect</span>
+                                <span class="badge @(databaseConnects ? "bg-success" : "bg-danger")">
+                                    @(databaseConnects ? "YES" : "NO")
+                                </span>
+                            </div>
+                            <div class="list-group-item d-flex justify-content-between align-items-center">
+                                <span>Pending Migrations</span>
+                                <span class="badge @(pendingMigrations.Any() ? "bg-warning" : "bg-success")">
+                                    @pendingMigrations.Count
+                                </span>
+                            </div>
+                            @if (pendingMigrations.Any())
+                            {
+                                <div class="list-group-item">
+                                    <small><strong>Pending:</strong> @string.Join(", ", pendingMigrations)</small>
+                                </div>
+                            }
+                        </div>
+
+                        @if (!string.IsNullOrEmpty(errorMessage))
+                        {
+                            <div class="alert alert-danger">
+                                <h6>Error Details:</h6>
+                                <pre style="font-size: 0.8rem; white-space: pre-wrap;">@errorMessage</pre>
+                            </div>
+                        }
+                    </div>
+
+                    <div class="col-md-6">
+                        <h5>Recent Audit Logs</h5>
+                        @if (recentLogs.Any())
+                        {
+                            <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
+                                <table class="table table-sm table-striped">
+                                    <thead class="table-dark">
+                                        <tr>
+                                            <th>Time</th>
+                                            <th>Event Type</th>
+                                            <th>Action</th>
+                                            <th>User</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (var log in recentLogs)
+                                        {
+                                            <tr>
+                                                <td style="font-size: 0.8rem;">@log.Timestamp.ToString("MM/dd HH:mm")</td>
+                                                <td><span class="badge bg-secondary">@log.EventType</span></td>
+                                                <td style="font-size: 0.8rem;">@log.Action</td>
+                                                <td style="font-size: 0.8rem;">@log.Username</td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="alert alert-warning">
+                                <i class="bi bi-exclamation-triangle me-2"></i>
+                                No recent audit logs found. This could indicate:
+                                <ul class="mb-0 mt-2">
+                                    <li>Audit logging is not working</li>
+                                    <li>No user activity has been logged yet</li>
+                                    <li>Database permissions issue</li>
+                                    <li>Migration not applied</li>
+                                </ul>
+                            </div>
+                        }
+
+                        @if (diagnosticLogs.Any())
+                        {
+                            <h5 class="mt-4">Diagnostic Log</h5>
+                            <div style="max-height: 300px; overflow-y: auto; font-size: 0.8rem; background: #f8f9fa; padding: 10px; border-radius: 4px;">
+                                @foreach (var logEntry in diagnosticLogs)
+                                {
+                                    <div class="mb-1">@logEntry</div>
+                                }
+                            </div>
+                        }
+                    </div>
+                </div>
+
+                <div class="mt-4">
+                    <button class="btn btn-primary me-2" @onclick="CheckDatabase">
+                        <i class="bi bi-arrow-clockwise me-1"></i>
+                        Refresh Check
+                    </button>
+                    
+                    <button class="btn btn-success me-2" @onclick="CreateTestLog">
+                        <i class="bi bi-plus-circle me-1"></i>
+                        Create Test Log
+                    </button>
+
+                    @if (pendingMigrations.Any() || (!tableExists && databaseConnects))
+                    {
+                        <button class="btn btn-warning me-2" @onclick="ApplyMigrations">
+                            <i class="bi bi-database-gear me-1"></i>
+                            @if (pendingMigrations.Any())
+                            {
+                                <text>Apply @pendingMigrations.Count Migration(s)</text>
+                            }
+                            else
+                            {
+                                <text>Apply Security Migrations</text>
+                            }
+                        </button>
+                    }
+
+                    @if (!tableExists && databaseConnects)
+                    {
+                        <button class="btn btn-danger me-2" @onclick="ForceCreateAuditTable">
+                            <i class="bi bi-database-add me-1"></i>
+                            Force Create AuditLog Table
+                        </button>
+                    }
+
+                    @if (tableExists && tableAccessible)
+                    {
+                        <a href="/debug/audit-test" class="btn btn-info">
+                            <i class="bi bi-gear me-1"></i>
+                            Run Full Audit Tests
+                        </a>
+                    }
+                </div>
+
+                @if (!string.IsNullOrEmpty(statusMessage))
+                {
+                    <div class="alert alert-info mt-3">
+                        <strong>Status:</strong> @statusMessage
+                    </div>
+                }
+
+                @if (!tableExists && databaseConnects)
+                {
+                    <div class="alert alert-warning mt-3">
+                        <h6><i class="bi bi-exclamation-triangle me-2"></i>Alternative Solutions</h6>
+                        <p>If the migration buttons don't work, you can also apply the migration manually:</p>
+                        <h6>Option 1: Package Manager Console (Visual Studio)</h6>
+                        <code>Update-Database -Context SecurityDbContext</code>
+                        
+                        <h6 class="mt-2">Option 2: Command Line (.NET CLI)</h6>
+                        <code>dotnet ef database update --context SecurityDbContext</code>
+                        
+                        <h6 class="mt-2">Option 3: Force Create Table</h6>
+                        <p>Use the "Force Create AuditLog Table" button above if migrations are not working.</p>
+                    </div>
+                }
+            }
+        </div>
+    </div>
+</div>
+
+@code {
+    private bool isLoading = true;
+    private bool tableExists = false;
+    private bool tableAccessible = false;
+    private bool canInsertTest = false;
+    private bool databaseConnects = false;
+    private int auditLogCount = 0;
+    private List<AuditLog> recentLogs = new();
+    private List<string> pendingMigrations = new();
+    private List<string> diagnosticLogs = new();
+    private string? errorMessage;
+    private string? statusMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await CheckDatabase();
+    }
+
+    private void AddDiagnosticLog(string message)
+    {
+        var timestamp = DateTime.Now.ToString("HH:mm:ss.fff");
+        diagnosticLogs.Add($"[{timestamp}] {message}");
+        Logger.LogInformation("AuditDatabaseCheck: {Message}", message);
+    }
+
+    private async Task CheckDatabase()
+    {
+        isLoading = true;
+        errorMessage = null;
+        statusMessage = null;
+        recentLogs.Clear();
+        diagnosticLogs.Clear();
+        pendingMigrations.Clear();
+
+        try
+        {
+            AddDiagnosticLog("Starting database check...");
+
+            // Test 1: Check database connection
+            try
+            {
+                databaseConnects = await SecurityContext.Database.CanConnectAsync();
+                AddDiagnosticLog($"Database connection test: {(databaseConnects ? "SUCCESS" : "FAILED")}");
+            }
+            catch (Exception ex)
+            {
+                databaseConnects = false;
+                AddDiagnosticLog($"Database connection failed: {ex.Message}");
+                errorMessage = $"Database connection error: {ex.Message}";
+            }
+
+            if (databaseConnects)
+            {
+                // Test 2: Check for pending migrations
+                try
+                {
+                    var pending = await SecurityContext.Database.GetPendingMigrationsAsync();
+                    pendingMigrations = pending.ToList();
+                    AddDiagnosticLog($"Pending migrations: {pendingMigrations.Count}");
+                    if (pendingMigrations.Any())
+                    {
+                        AddDiagnosticLog($"Migrations needed: {string.Join(", ", pendingMigrations)}");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    AddDiagnosticLog($"Error checking migrations: {ex.Message}");
+                }
+
+                // Test 3: Check if AuditLog table exists using SQL
+                try
+                {
+                    var sql = "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'AuditLog' AND TABLE_SCHEMA = 'dbo'";
+                    var tableCount = await SecurityContext.Database.SqlQueryRaw<int>(sql).FirstOrDefaultAsync();
+                    tableExists = tableCount > 0;
+                    AddDiagnosticLog($"AuditLog table exists (SQL check): {tableExists}");
+                }
+                catch (Exception ex)
+                {
+                    tableExists = false;
+                    AddDiagnosticLog($"Error checking table existence: {ex.Message}");
+                    if (errorMessage == null) errorMessage = $"Error checking table existence: {ex.Message}";
+                }
+
+                // Test 4: Check if table is accessible via Entity Framework
+                if (tableExists)
+                {
+                    try
+                    {
+                        auditLogCount = await SecurityContext.AuditLogs.CountAsync();
+                        tableAccessible = true;
+                        AddDiagnosticLog($"AuditLog table accessible via EF. Count: {auditLogCount}");
+                    }
+                    catch (Exception ex)
+                    {
+                        tableAccessible = false;
+                        AddDiagnosticLog($"Error accessing AuditLog via EF: {ex.Message}");
+                        if (errorMessage == null) errorMessage = $"Error accessing AuditLog table: {ex.Message}";
+                    }
+
+                    // Test 5: Try to insert a test record
+                    if (tableAccessible)
+                    {
+                        try
+                        {
+                            var testLog = new AuditLog
+                            {
+                                EventType = "DatabaseTest",
+                                Action = "ConnectivityTest",
+                                Username = "SystemDiagnostic",
+                                Result = "Success",
+                                Details = $"Connectivity test at {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC",
+                                Timestamp = DateTime.UtcNow
+                            };
+
+                            SecurityContext.AuditLogs.Add(testLog);
+                            var changes = await SecurityContext.SaveChangesAsync();
+                            canInsertTest = changes > 0;
+                            AddDiagnosticLog($"Test insert result: {(canInsertTest ? "SUCCESS" : "FAILED")} - {changes} changes");
+
+                            if (canInsertTest)
+                            {
+                                // Remove the test record to keep the audit log clean
+                                SecurityContext.AuditLogs.Remove(testLog);
+                                await SecurityContext.SaveChangesAsync();
+                                AddDiagnosticLog("Test record cleaned up successfully");
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            canInsertTest = false;
+                            AddDiagnosticLog($"Test insert failed: {ex.Message}");
+                            if (errorMessage == null) errorMessage = $"Insert test failed: {ex.Message}";
+                        }
+
+                        // Test 6: Try to get recent logs
+                        try
+                        {
+                            recentLogs = await SecurityContext.AuditLogs
+                                .OrderByDescending(al => al.Timestamp)
+                                .Take(10)
+                                .ToListAsync();
+                            AddDiagnosticLog($"Retrieved {recentLogs.Count} recent logs");
+                        }
+                        catch (Exception ex)
+                        {
+                            AddDiagnosticLog($"Error retrieving recent logs: {ex.Message}");
+                            if (errorMessage == null) errorMessage = $"Error retrieving logs: {ex.Message}";
+                        }
+                    }
+                }
+            }
+
+            // Set status message
+            if (!databaseConnects)
+            {
+                statusMessage = "? Cannot connect to database. Check connection string.";
+            }
+            else if (pendingMigrations.Any())
+            {
+                statusMessage = $"?? {pendingMigrations.Count} pending migrations need to be applied.";
+            }
+            else if (!tableExists)
+            {
+                statusMessage = "? AuditLog table does not exist. Database migration may not have been applied.";
+            }
+            else if (!tableAccessible)
+            {
+                statusMessage = "?? AuditLog table exists but is not accessible via Entity Framework.";
+            }
+            else if (!canInsertTest)
+            {
+                statusMessage = "?? Can read from AuditLog table but cannot insert records.";
+            }
+            else
+            {
+                statusMessage = $"? Audit database is working correctly. Found {auditLogCount} total audit logs.";
+            }
+
+            AddDiagnosticLog($"Final status: {statusMessage}");
+        }
+        catch (Exception ex)
+        {
+            AddDiagnosticLog($"General error during database check: {ex}");
+            errorMessage = $"General error during database check: {ex.Message}";
+            statusMessage = "? Unable to check audit database status.";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task CreateTestLog()
+    {
+        try
+        {
+            AddDiagnosticLog("Creating manual test log...");
+            
+            var testLog = new AuditLog
+            {
+                EventType = "DatabaseTest",
+                Action = "ManualTest",
+                Username = "DatabaseCheckTool",
+                Result = "Success",
+                Details = $"Manual test log created at {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC",
+                Timestamp = DateTime.UtcNow
+            };
+
+            SecurityContext.AuditLogs.Add(testLog);
+            var changes = await SecurityContext.SaveChangesAsync();
+            
+            AddDiagnosticLog($"Manual test log result: {changes} changes saved");
+            statusMessage = "? Test audit log created successfully!";
+            
+            // Refresh the data
+            await CheckDatabase();
+        }
+        catch (Exception ex)
+        {
+            AddDiagnosticLog($"Manual test log failed: {ex.Message}");
+            statusMessage = $"? Failed to create test log: {ex.Message}";
+        }
+    }
+
+    private async Task ApplyMigrations()
+    {
+        try
+        {
+            AddDiagnosticLog("Checking for pending migrations in SecurityDbContext...");
+            
+            // Get a fresh list of pending migrations
+            var pendingBeforeApply = await SecurityContext.Database.GetPendingMigrationsAsync();
+            AddDiagnosticLog($"Found {pendingBeforeApply.Count()} pending migrations: {string.Join(", ", pendingBeforeApply)}");
+            
+            AddDiagnosticLog("Applying pending migrations...");
+            statusMessage = "? Applying SecurityDbContext migrations...";
+            StateHasChanged();
+
+            // Apply SecurityDbContext migrations specifically
+            await SecurityContext.Database.MigrateAsync();
+            
+            // Verify what was applied
+            var pendingAfterApply = await SecurityContext.Database.GetPendingMigrationsAsync();
+            AddDiagnosticLog($"Migrations applied successfully. Remaining pending: {pendingAfterApply.Count()}");
+            
+            statusMessage = "? Migrations applied successfully!";
+            
+            // Refresh the data
+            await CheckDatabase();
+        }
+        catch (Exception ex)
+        {
+            AddDiagnosticLog($"Migration failed: {ex.Message}");
+            AddDiagnosticLog($"Full exception: {ex}");
+            statusMessage = $"? Failed to apply migrations: {ex.Message}";
+        }
+    }
+
+    private async Task ForceCreateAuditTable()
+    {
+        try
+        {
+            AddDiagnosticLog("Attempting to force-create AuditLog table...");
+            statusMessage = "? Force-creating AuditLog table...";
+            StateHasChanged();
+
+            var createTableSql = @"
+                CREATE TABLE [dbo].[AuditLog] (
+                    [AuditLogId] int IDENTITY(1,1) NOT NULL,
+                    [EventType] nvarchar(50) NOT NULL,
+                    [Action] nvarchar(100) NOT NULL,
+                    [Username] nvarchar(255) NOT NULL,
+                    [UserId] int NULL,
+                    [ProjectId] int NULL,
+                    [DocumentId] int NULL,
+                    [ResourceId] nvarchar(255) NULL,
+                    [Result] nvarchar(50) NOT NULL,
+                    [Details] nvarchar(1000) NULL,
+                    [IpAddress] nvarchar(45) NULL,
+                    [UserAgent] nvarchar(500) NULL,
+                    [SessionId] nvarchar(100) NULL,
+                    [Timestamp] datetime2 NOT NULL,
+                    [DurationMs] bigint NULL,
+                    [Metadata] nvarchar(2000) NULL,
+                    CONSTRAINT [PK_AuditLog] PRIMARY KEY CLUSTERED ([AuditLogId] ASC)
+                );
+
+                -- Add indexes for performance
+                CREATE INDEX [IX_AuditLog_Timestamp] ON [dbo].[AuditLog] ([Timestamp]);
+                CREATE INDEX [IX_AuditLog_EventType_Timestamp] ON [dbo].[AuditLog] ([EventType], [Timestamp]);
+                CREATE INDEX [IX_AuditLog_Username_Timestamp] ON [dbo].[AuditLog] ([Username], [Timestamp]);
+                CREATE INDEX [IX_AuditLog_Project_Timestamp] ON [dbo].[AuditLog] ([ProjectId], [Timestamp]);
+                CREATE INDEX [IX_AuditLog_Document_Timestamp] ON [dbo].[AuditLog] ([DocumentId], [Timestamp]);
+                CREATE INDEX [IX_AuditLog_Result_Timestamp] ON [dbo].[AuditLog] ([Result], [Timestamp]);
+
+                -- Add foreign key constraint if ApplicationUser table exists
+                IF EXISTS (SELECT * FROM sys.tables WHERE name = 'ApplicationUser' AND schema_id = SCHEMA_ID('dbo'))
+                BEGIN
+                    ALTER TABLE [dbo].[AuditLog] 
+                    ADD CONSTRAINT [FK_AuditLog_ApplicationUser_UserId] 
+                    FOREIGN KEY ([UserId]) REFERENCES [dbo].[ApplicationUser] ([UserId]) 
+                    ON DELETE SET NULL;
+                END
+            ";
+
+            await SecurityContext.Database.ExecuteSqlRawAsync(createTableSql);
+            
+            AddDiagnosticLog("AuditLog table created successfully via SQL");
+            statusMessage = "? AuditLog table created successfully!";
+            
+            // Refresh the data
+            await CheckDatabase();
+        }
+        catch (Exception ex)
+        {
+            AddDiagnosticLog($"Force create failed: {ex.Message}");
+            statusMessage = $"? Failed to force-create table: {ex.Message}";
+        }
+    }
+}
+#endif

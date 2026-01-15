@@ -1,0 +1,276 @@
+﻿#if DEBUG
+@page "/test/simple"
+@using DV.Web.Services
+@using DV.Shared.Security
+@using Microsoft.AspNetCore.Components.Authorization
+@inject AuthenticationStateProvider AuthStateProvider
+@inject UserService UserService
+@inject IJSRuntime JSRuntime
+@rendermode InteractiveServer
+
+<PageTitle>Simple Test Page</PageTitle>
+
+<div class="container mt-4">
+    <div class="card">
+        <div class="card-header">
+            <h4>Simple Authentication and Role Test</h4>
+        </div>
+        <div class="card-body">
+            @if (isLoading)
+            {
+                <div class="text-center">
+                    <div class="spinner-border text-primary" role="status"></div>
+                    <p class="mt-2">Loading...</p>
+                </div>
+            }
+            else
+            {
+                <div class="row">
+                    <div class="col-md-6">
+                        <h5>Authentication Status</h5>
+                        <ul class="list-group">
+                            <li class="list-group-item d-flex justify-content-between">
+                                <strong>Is Authenticated:</strong>
+                                <span class="badge @(isAuthenticated ? "bg-success" : "bg-danger")">
+                                    @(isAuthenticated ? "Yes" : "No")
+                                </span>
+                            </li>
+                            <li class="list-group-item d-flex justify-content-between">
+                                <strong>Raw Username:</strong>
+                                <span>@(string.IsNullOrEmpty(rawUsername) ? "None" : rawUsername)</span>
+                            </li>
+                            <li class="list-group-item d-flex justify-content-between">
+                                <strong>Normalized Username:</strong>
+                                <span>@(string.IsNullOrEmpty(normalizedUsername) ? "None" : normalizedUsername)</span>
+                            </li>
+                        </ul>
+                    </div>
+                    
+                    <div class="col-md-6">
+                        <h5>User & Roles</h5>
+                        <ul class="list-group">
+                            <li class="list-group-item d-flex justify-content-between">
+                                <strong>User Found in DB:</strong>
+                                <span class="badge @(databaseUser != null ? "bg-success" : "bg-warning")">
+                                    @(databaseUser != null ? "Yes" : "No")
+                                </span>
+                            </li>
+                            <li class="list-group-item d-flex justify-content-between">
+                                <strong>User ID:</strong>
+                                <span>@(databaseUser?.UserId ?? 0)</span>
+                            </li>
+                            <li class="list-group-item d-flex justify-content-between">
+                                <strong>Roles Count:</strong>
+                                <span class="badge bg-info">@userRoles.Count</span>
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+
+                @if (userRoles.Any())
+                {
+                    <div class="mt-4">
+                        <h5>Global Roles (Deprecated)</h5>
+                        <div class="alert alert-warning">
+                            <i class="bi bi-exclamation-triangle me-2"></i>
+                            <strong>Note:</strong> Global roles are deprecated. Users should be assigned to project-specific roles instead.
+                            <a href="/admin/project-roles" class="alert-link">Manage Project Roles</a>
+                        </div>
+                        <div class="row">
+                            @foreach (var role in userRoles)
+                            {
+                                <div class="col-md-4 mb-2">
+                                    <div class="card">
+                                        <div class="card-body p-2">
+                                            <h6 class="card-title mb-1">@role.Name</h6>
+                                            <small class="text-muted">ID: @role.RoleId</small>
+                                            @if (!string.IsNullOrEmpty(role.Description))
+                                            {
+                                                <br><small class="text-muted">@role.Description</small>
+                                            }
+                                        </div>
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    </div>
+                }
+                else
+                {
+                    <div class="mt-4">
+                        <div class="alert alert-info">
+                            <i class="bi bi-info-circle me-2"></i>
+                            <strong>No Global Roles</strong> - User roles are now managed through project-specific assignments.
+                            <a href="/admin/project-roles" class="alert-link">View Project Role Management</a>
+                        </div>
+                    </div>
+                }
+
+                @if (!string.IsNullOrEmpty(errorMessage))
+                {
+                    <div class="alert alert-danger mt-3">
+                        <strong>Error:</strong> @errorMessage
+                        @if (!string.IsNullOrEmpty(detailedError))
+                        {
+                            <details class="mt-2">
+                                <summary>Show Details</summary>
+                                <pre class="mt-2 small">@detailedError</pre>
+                            </details>
+                        }
+                    </div>
+                }
+
+                <div class="mt-4">
+                    <button class="btn btn-primary me-2" @onclick="RefreshData">
+                        <i class="bi bi-arrow-clockwise me-1"></i>
+                        Refresh
+                    </button>
+                    <button class="btn btn-secondary" @onclick="LogToConsole">
+                        <i class="bi bi-terminal me-1"></i>
+                        Log to Console
+                    </button>
+                </div>
+            }
+        </div>
+    </div>
+</div>
+
+@code {
+    private bool isLoading = true;
+    private bool isAuthenticated = false;
+    private string? rawUsername;
+    private string? normalizedUsername;
+    private ApplicationUser? databaseUser;
+    private List<ApplicationRole> userRoles = new();
+    private string? errorMessage;
+    private string? detailedError;
+    private bool hasRendered = false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadTestData();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            hasRendered = true;
+            
+            // If there were any errors during initialization that need JavaScript logging
+            if (!string.IsNullOrEmpty(detailedError))
+            {
+                await LogErrorToConsole();
+            }
+        }
+    }
+
+    private async Task LoadTestData()
+    {
+        try
+        {
+            isLoading = true;
+            errorMessage = null;
+            detailedError = null;
+
+            // Step 1: Check authentication
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            isAuthenticated = authState.User.Identity?.IsAuthenticated == true;
+            rawUsername = authState.User.Identity?.Name;
+
+            if (!isAuthenticated)
+            {
+                errorMessage = "User is not authenticated";
+                return;
+            }
+
+            if (string.IsNullOrEmpty(rawUsername))
+            {
+                errorMessage = "Username is null or empty";
+                return;
+            }
+
+            // Step 2: Normalize username
+            normalizedUsername = NormalizeUsername(rawUsername);
+
+            // Step 3: Check if user exists in database
+            databaseUser = await UserService.GetUserByUsernameAsync(rawUsername);
+
+            if (databaseUser == null)
+            {
+                // Step 4: Create user if not exists
+                var displayName = normalizedUsername;
+                var email = $"{normalizedUsername}@example.com";
+                
+                databaseUser = await UserService.EnsureUserExistsAsync(rawUsername, displayName, email);
+            }
+
+            // Step 5: Get user roles
+            if (databaseUser != null)
+            {
+                userRoles = await UserService.GetUserRolesAsync(databaseUser.UserId);
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error: {ex.Message}";
+            detailedError = $"Exception Details:\n{ex.Message}\n\nStack Trace:\n{ex.StackTrace}";
+            
+            // Don't try to log to console here during initialization
+            // We'll do it in OnAfterRenderAsync if needed
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task RefreshData()
+    {
+        await LoadTestData();
+        StateHasChanged();
+    }
+
+    private async Task LogToConsole()
+    {
+        if (!hasRendered) return;
+        
+        await JSRuntime.InvokeVoidAsync("console.log", "=== SIMPLE TEST DATA ===");
+        await JSRuntime.InvokeVoidAsync("console.log", $"Is Authenticated: {isAuthenticated}");
+        await JSRuntime.InvokeVoidAsync("console.log", $"Raw Username: {rawUsername}");
+        await JSRuntime.InvokeVoidAsync("console.log", $"Normalized Username: {normalizedUsername}");
+        await JSRuntime.InvokeVoidAsync("console.log", $"Database User ID: {databaseUser?.UserId}");
+        await JSRuntime.InvokeVoidAsync("console.log", $"User Roles Count: {userRoles.Count}");
+        
+        if (userRoles.Any())
+        {
+            foreach (var role in userRoles)
+            {
+                await JSRuntime.InvokeVoidAsync("console.log", $"Role: {role.Name} (ID: {role.RoleId})");
+            }
+        }
+        
+        if (!string.IsNullOrEmpty(errorMessage))
+        {
+            await JSRuntime.InvokeVoidAsync("console.log", $"Error: {errorMessage}");
+        }
+        
+        await JSRuntime.InvokeVoidAsync("console.log", "=== END TEST DATA ===");
+    }
+
+    private async Task LogErrorToConsole()
+    {
+        if (!hasRendered || string.IsNullOrEmpty(detailedError)) return;
+        
+        await JSRuntime.InvokeVoidAsync("console.error", "Test page error during initialization:");
+        await JSRuntime.InvokeVoidAsync("console.error", detailedError);
+    }
+
+    private string NormalizeUsername(string username)
+    {
+        if (string.IsNullOrWhiteSpace(username)) return string.Empty;
+        if (username.Contains('\\')) return username.Split('\\')[1];
+        return username;
+    }
+}
+#endif

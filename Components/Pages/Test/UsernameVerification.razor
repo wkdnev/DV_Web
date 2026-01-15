@@ -1,0 +1,245 @@
+﻿#if DEBUG
+@page "/test/username-verification"
+@using DV.Web.Services
+@using DV.Shared.Security
+@using Microsoft.AspNetCore.Components.Authorization
+@inject AuthenticationStateProvider AuthStateProvider
+@inject UserService UserService
+@inject IJSRuntime JSRuntime
+@rendermode InteractiveServer
+
+<PageTitle>Username Verification Test</PageTitle>
+
+<div class="container mt-4">
+    <div class="card">
+        <div class="card-header bg-success text-white">
+            <h4 class="mb-0">Username Verification Test</h4>
+            <small>This page verifies that AD usernames are preserved correctly</small>
+        </div>
+        <div class="card-body">
+            @if (isLoading)
+            {
+                <div class="text-center">
+                    <div class="spinner-border text-primary" role="status"></div>
+                    <p class="mt-2">Testing username handling...</p>
+                </div>
+            }
+            else
+            {
+                <div class="alert alert-info">
+                    <h6>Test Results:</h6>
+                    <p>This test verifies that Active Directory usernames (like "AD\neil.rainsforth") are preserved correctly in the database without creating duplicate users.</p>
+                </div>
+
+                <div class="row">
+                    <div class="col-md-6">
+                        <h5>Authentication Data</h5>
+                        <table class="table table-striped">
+                            <tr>
+                                <td><strong>Is Authenticated:</strong></td>
+                                <td>
+                                    <span class="badge @(isAuthenticated ? "bg-success" : "bg-danger")">
+                                        @(isAuthenticated ? "Yes" : "No")
+                                    </span>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td><strong>Raw Username from Auth:</strong></td>
+                                <td><code>@rawUsername</code></td>
+                            </tr>
+                            <tr>
+                                <td><strong>Username Length:</strong></td>
+                                <td>@(rawUsername?.Length ?? 0) characters</td>
+                            </tr>
+                            <tr>
+                                <td><strong>Contains Domain Prefix:</strong></td>
+                                <td>
+                                    <span class="badge @(rawUsername?.Contains('\\') == true ? "bg-success" : "bg-warning")">
+                                        @(rawUsername?.Contains('\\') == true ? "Yes" : "No")
+                                    </span>
+                                </td>
+                            </tr>
+                        </table>
+                    </div>
+
+                    <div class="col-md-6">
+                        <h5>Database Storage</h5>
+                        @if (databaseUser != null)
+                        {
+                            <table class="table table-striped">
+                                <tr>
+                                    <td><strong>User ID:</strong></td>
+                                    <td>@databaseUser.UserId</td>
+                                </tr>
+                                <tr>
+                                    <td><strong>Stored Username:</strong></td>
+                                    <td><code>@databaseUser.Username</code></td>
+                                </tr>
+                                <tr>
+                                    <td><strong>Display Name:</strong></td>
+                                    <td>@databaseUser.DisplayName</td>
+                                </tr>
+                                <tr>
+                                    <td><strong>Username Matches Auth:</strong></td>
+                                    <td>
+                                        <span class="badge @(databaseUser.Username == rawUsername ? "bg-success" : "bg-danger")">
+                                            @(databaseUser.Username == rawUsername ? "Perfect Match" : "MISMATCH!")
+                                        </span>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td><strong>Created Date:</strong></td>
+                                    <td>@databaseUser.CreatedDate.ToString("yyyy-MM-dd HH:mm:ss")</td>
+                                </tr>
+                            </table>
+                        }
+                        else
+                        {
+                            <div class="alert alert-danger">
+                                <strong>ERROR:</strong> No user found in database!
+                            </div>
+                        }
+                    </div>
+                </div>
+
+                <div class="row mt-4">
+                    <div class="col-12">
+                        <h5>Test Analysis</h5>
+                        @if (databaseUser != null && rawUsername != null)
+                        {
+                            @if (databaseUser.Username == rawUsername && rawUsername.Contains('\\'))
+                            {
+                                <div class="alert alert-success">
+                                    <h6><i class="bi bi-check-circle me-2"></i>? PERFECT!</h6>
+                                    <p>The AD username is being stored correctly with the domain prefix preserved. No duplicate users should be created.</p>
+                                    <ul>
+                                        <li>Authentication username: <code>@rawUsername</code></li>
+                                        <li>Database username: <code>@databaseUser.Username</code></li>
+                                        <li>Status: <strong>Exact match with domain preserved</strong></li>
+                                    </ul>
+                                </div>
+                            }
+                            else if (databaseUser.Username != rawUsername)
+                            {
+                                <div class="alert alert-danger">
+                                    <h6><i class="bi bi-x-circle me-2"></i>? USERNAME MISMATCH!</h6>
+                                    <p>The username stored in the database doesn't match the authentication username. This could cause authentication issues.</p>
+                                    <ul>
+                                        <li>Authentication username: <code>@rawUsername</code></li>
+                                        <li>Database username: <code>@databaseUser.Username</code></li>
+                                        <li>Status: <strong>MISMATCH - needs fixing</strong></li>
+                                    </ul>
+                                </div>
+                            }
+                            else if (!rawUsername.Contains('\\'))
+                            {
+                                <div class="alert alert-warning">
+                                    <h6><i class="bi bi-exclamation-triangle me-2"></i>?? NO DOMAIN PREFIX</h6>
+                                    <p>The username doesn't contain a domain prefix, which is unexpected for AD authentication.</p>
+                                    <ul>
+                                        <li>Username: <code>@rawUsername</code></li>
+                                        <li>Status: <strong>No domain prefix detected</strong></li>
+                                    </ul>
+                                </div>
+                            }
+                        }
+
+                        <h6 class="mt-4">Actions</h6>
+                        <div class="btn-group">
+                            <button class="btn btn-primary" @onclick="RefreshTest">
+                                <i class="bi bi-arrow-clockwise me-1"></i>
+                                Re-run Test
+                            </button>
+                            <button class="btn btn-secondary" @onclick="LogToConsole">
+                                <i class="bi bi-terminal me-1"></i>
+                                Log to Console
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                @if (!string.IsNullOrEmpty(errorMessage))
+                {
+                    <div class="alert alert-danger mt-3">
+                        <strong>Error:</strong> @errorMessage
+                    </div>
+                }
+            }
+        </div>
+    </div>
+</div>
+
+@code {
+    private bool isLoading = true;
+    private bool isAuthenticated = false;
+    private string? rawUsername;
+    private ApplicationUser? databaseUser;
+    private string? errorMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await RunUsernameTest();
+    }
+
+    private async Task RunUsernameTest()
+    {
+        try
+        {
+            isLoading = true;
+            errorMessage = null;
+
+            // Step 1: Get authentication username
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            isAuthenticated = authState.User.Identity?.IsAuthenticated == true;
+            rawUsername = authState.User.Identity?.Name;
+
+            if (!isAuthenticated || string.IsNullOrEmpty(rawUsername))
+            {
+                errorMessage = "User is not authenticated or username is empty";
+                return;
+            }
+
+            // Step 2: Get user from database using the EXACT username
+            databaseUser = await UserService.GetUserByUsernameAsync(rawUsername);
+
+            if (databaseUser == null)
+            {
+                errorMessage = "User not found in database - this suggests GetUserByUsernameAsync isn't working correctly";
+                return;
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error during test: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task RefreshTest()
+    {
+        await RunUsernameTest();
+        StateHasChanged();
+    }
+
+    private async Task LogToConsole()
+    {
+        await JSRuntime.InvokeVoidAsync("console.log", "=== USERNAME VERIFICATION TEST ===");
+        await JSRuntime.InvokeVoidAsync("console.log", $"Is Authenticated: {isAuthenticated}");
+        await JSRuntime.InvokeVoidAsync("console.log", $"Raw Username: {rawUsername}");
+        await JSRuntime.InvokeVoidAsync("console.log", $"Database User ID: {databaseUser?.UserId}");
+        await JSRuntime.InvokeVoidAsync("console.log", $"Database Username: {databaseUser?.Username}");
+        await JSRuntime.InvokeVoidAsync("console.log", $"Usernames Match: {databaseUser?.Username == rawUsername}");
+        await JSRuntime.InvokeVoidAsync("console.log", $"Contains Domain: {rawUsername?.Contains('\\')}");
+        
+        if (!string.IsNullOrEmpty(errorMessage))
+        {
+            await JSRuntime.InvokeVoidAsync("console.error", $"Error: {errorMessage}");
+        }
+        
+        await JSRuntime.InvokeVoidAsync("console.log", "=== END USERNAME TEST ===");
+    }
+}
+#endif

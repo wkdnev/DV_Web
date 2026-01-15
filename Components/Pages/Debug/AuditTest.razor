@@ -1,0 +1,310 @@
+﻿#if DEBUG
+@page "/debug/audit-test"
+@using DV.Web.Services
+@using DV.Shared.Security
+@using Microsoft.AspNetCore.Components.Authorization
+@inject AuditService AuditService
+@inject AuthenticationStateProvider AuthStateProvider
+@inject IJSRuntime JSRuntime
+@rendermode InteractiveServer
+
+<PageTitle>Audit System Test</PageTitle>
+
+<div class="container mt-4">
+    <div class="card">
+        <div class="card-header bg-primary text-white">
+            <h4 class="mb-0">Audit System Diagnostic Test</h4>
+            <small>This page tests if the audit logging system is working correctly</small>
+        </div>
+        <div class="card-body">
+            @if (isLoading)
+            {
+                <div class="text-center">
+                    <div class="spinner-border text-primary" role="status"></div>
+                    <p class="mt-2">Testing audit system...</p>
+                </div>
+            }
+            else
+            {
+                <div class="row">
+                    <div class="col-md-8">
+                        <h5>Test Results</h5>
+                        @foreach (var result in testResults)
+                        {
+                            <div class="alert @(result.Success ? "alert-success" : "alert-danger")">
+                                <i class="bi @(result.Success ? "bi-check-circle" : "bi-x-circle") me-2"></i>
+                                <strong>@result.TestName:</strong> @result.Message
+                                @if (!string.IsNullOrEmpty(result.Details))
+                                {
+                                    <br><small>@result.Details</small>
+                                }
+                            </div>
+                        }
+                        
+                        @if (testResults.Any())
+                        {
+                            <div class="mt-4">
+                                <button class="btn btn-primary" @onclick="RunTests">
+                                    <i class="bi bi-arrow-clockwise me-2"></i>
+                                    Re-run Tests
+                                </button>
+                                <button class="btn btn-secondary ms-2" @onclick="ClearResults">
+                                    <i class="bi bi-x-circle me-2"></i>
+                                    Clear Results
+                                </button>
+                            </div>
+                        }
+                    </div>
+                    
+                    <div class="col-md-4">
+                        <h5>Manual Test</h5>
+                        <p class="text-muted">Use this section to manually test audit logging:</p>
+                        
+                        <div class="mb-3">
+                            <label class="form-label">Test Message</label>
+                            <input type="text" class="form-control" @bind="testMessage" placeholder="Enter test message" />
+                        </div>
+                        
+                        <button class="btn btn-info w-100" @onclick="LogManualTest" disabled="@string.IsNullOrEmpty(testMessage)">
+                            <i class="bi bi-pencil-square me-2"></i>
+                            Log Manual Test Event
+                        </button>
+                        
+                        @if (!string.IsNullOrEmpty(manualTestResult))
+                        {
+                            <div class="alert alert-info mt-3">
+                                <small>@manualTestResult</small>
+                            </div>
+                        }
+                    </div>
+                </div>
+
+                @if (!testResults.Any())
+                {
+                    <div class="text-center">
+                        <button class="btn btn-success btn-lg" @onclick="RunTests">
+                            <i class="bi bi-play-circle me-2"></i>
+                            Run Audit System Tests
+                        </button>
+                    </div>
+                }
+            }
+        </div>
+    </div>
+</div>
+
+@code {
+    private bool isLoading = false;
+    private List<TestResult> testResults = new();
+    private string testMessage = "";
+    private string manualTestResult = "";
+
+    public class TestResult
+    {
+        public string TestName { get; set; } = "";
+        public bool Success { get; set; }
+        public string Message { get; set; } = "";
+        public string? Details { get; set; }
+    }
+
+    private async Task RunTests()
+    {
+        isLoading = true;
+        testResults.Clear();
+        
+        try
+        {
+            // Get current user
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var username = authState.User.Identity?.Name ?? "TestUser";
+            
+            // Test 1: Basic audit logging
+            await TestBasicAuditLogging(username);
+            
+            // Test 2: Search audit logging (similar to DocumentSearch)
+            await TestSearchAuditLogging(username);
+            
+            // Test 3: Project access audit logging
+            await TestProjectAccessAuditLogging(username);
+            
+            // Test 4: Database connectivity for audit logs
+            await TestAuditDatabaseAccess();
+            
+        }
+        catch (Exception ex)
+        {
+            testResults.Add(new TestResult
+            {
+                TestName = "General Test Error",
+                Success = false,
+                Message = "An unexpected error occurred during testing",
+                Details = ex.Message
+            });
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task TestBasicAuditLogging(string username)
+    {
+        try
+        {
+            await AuditService.LogEventAsync(new AuditLog
+            {
+                EventType = AuditEventTypes.SecurityEvent,
+                Action = "DiagnosticTest",
+                Username = username,
+                Result = AuditResults.Success,
+                Details = "Basic audit logging test from diagnostic page"
+            });
+            
+            testResults.Add(new TestResult
+            {
+                TestName = "Basic Audit Logging",
+                Success = true,
+                Message = "Successfully logged basic audit event",
+                Details = "Event should appear in dbo.AuditLog table"
+            });
+        }
+        catch (Exception ex)
+        {
+            testResults.Add(new TestResult
+            {
+                TestName = "Basic Audit Logging",
+                Success = false,
+                Message = "Failed to log basic audit event",
+                Details = ex.Message
+            });
+        }
+    }
+
+    private async Task TestSearchAuditLogging(string username)
+    {
+        try
+        {
+            await AuditService.LogSearchAsync(
+                username,
+                null,
+                1, // Test project ID
+                "test search",
+                5, // Test result count
+                150 // Test duration
+            );
+            
+            testResults.Add(new TestResult
+            {
+                TestName = "Search Audit Logging",
+                Success = true,
+                Message = "Successfully logged search audit event",
+                Details = "Search event logged with DocumentAccess event type"
+            });
+        }
+        catch (Exception ex)
+        {
+            testResults.Add(new TestResult
+            {
+                TestName = "Search Audit Logging",
+                Success = false,
+                Message = "Failed to log search audit event",
+                Details = ex.Message
+            });
+        }
+    }
+
+    private async Task TestProjectAccessAuditLogging(string username)
+    {
+        try
+        {
+            await AuditService.LogProjectAccessAsync(
+                username,
+                null,
+                1, // Test project ID
+                AuditActions.AccessProject,
+                AuditResults.Success,
+                "Diagnostic test of project access logging"
+            );
+            
+            testResults.Add(new TestResult
+            {
+                TestName = "Project Access Audit Logging",
+                Success = true,
+                Message = "Successfully logged project access audit event",
+                Details = "Project access event logged with ProjectAccess event type"
+            });
+        }
+        catch (Exception ex)
+        {
+            testResults.Add(new TestResult
+            {
+                TestName = "Project Access Audit Logging",
+                Success = false,
+                Message = "Failed to log project access audit event",
+                Details = ex.Message
+            });
+        }
+    }
+
+    private async Task TestAuditDatabaseAccess()
+    {
+        try
+        {
+            // Try to retrieve recent audit logs to test database connectivity
+            var recentLogs = await AuditService.GetAuditLogsAsync(
+                fromDate: DateTime.UtcNow.AddMinutes(-5),
+                take: 10
+            );
+            
+            testResults.Add(new TestResult
+            {
+                TestName = "Audit Database Access",
+                Success = true,
+                Message = $"Successfully retrieved {recentLogs.Count} recent audit logs",
+                Details = "Database connectivity for audit logs is working"
+            });
+        }
+        catch (Exception ex)
+        {
+            testResults.Add(new TestResult
+            {
+                TestName = "Audit Database Access",
+                Success = false,
+                Message = "Failed to retrieve audit logs from database",
+                Details = ex.Message
+            });
+        }
+    }
+
+    private async Task LogManualTest()
+    {
+        try
+        {
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var username = authState.User.Identity?.Name ?? "TestUser";
+            
+            await AuditService.LogEventAsync(new AuditLog
+            {
+                EventType = AuditEventTypes.SecurityEvent,
+                Action = "ManualDiagnosticTest",
+                Username = username,
+                Result = AuditResults.Success,
+                Details = $"Manual test: {testMessage}"
+            });
+            
+            manualTestResult = $"? Manual test event logged successfully at {DateTime.Now:HH:mm:ss}";
+            testMessage = ""; // Clear the input
+        }
+        catch (Exception ex)
+        {
+            manualTestResult = $"? Failed to log manual test: {ex.Message}";
+        }
+    }
+
+    private void ClearResults()
+    {
+        testResults.Clear();
+        manualTestResult = "";
+    }
+}
+#endif

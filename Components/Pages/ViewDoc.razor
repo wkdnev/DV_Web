@@ -1,0 +1,171 @@
+﻿@* 
+   ============================================================================
+   ViewDoc.razor - Document Metadata Viewer for Document Viewer Application
+   ============================================================================
+   
+   Purpose: Displays metadata for a specific document, including its title, 
+   author, status, classification, and associated project. Provides a "View 
+   Document" button to open the document in a viewer (PDF or TIFF).
+   
+   Created: [Date]
+   Last Updated: October 15, 2025
+   
+   Dependencies:
+   - DocumentRepository: Handles database interactions for documents and projects.
+   - MinimalLayout: Provides a minimal layout for this page.
+   - Bootstrap 5.x for styling.
+*@
+
+@page "/viewdoc/{Database}/{DocumentId:int}"
+@* Defines the route for this page with database and document ID parameters *@
+
+@using DV.Shared.Models
+@using DV.Web.Services
+@using DV.Shared.Security
+@using DV.Web.Components.Layout
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Authorization
+@layout MinimalLayout
+@inject DocumentRepository Repo
+@inject UserService UserService
+@inject UserProjectAccessService UserProjectAccessService
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@attribute [Authorize]
+@rendermode InteractiveServer
+
+@if (isLoading)
+{
+    <div class="d-flex justify-content-center my-3">
+        <div class="spinner-border text-primary" role="status">
+            <span class="visually-hidden">Loading...</span>
+        </div>
+    </div>
+}
+else if (!string.IsNullOrEmpty(accessError))
+{
+    <div class="alert alert-danger">
+        <i class="bi bi-exclamation-triangle me-2"></i>
+        <strong>Access Denied</strong>
+        <p class="mb-0">@accessError</p>
+    </div>
+}
+else if (doc is null)
+{
+    <div class="alert alert-warning">
+        <i class="bi bi-file-x me-2"></i>
+        <strong>Document Not Found</strong>
+        <p class="mb-0">The requested document could not be found.</p>
+    </div>
+}
+else @* If the document is found, display its metadata *@
+{
+    <div class="card">
+        @* Card container for the document metadata *@
+        <div class="card-body">
+            @* Card body containing the metadata details *@
+            <h5 class="card-title">@doc.Title</h5> @* Display the document title *@
+            <h6 class="card-subtitle mb-2 text-body-secondary">@doc.DocumentNumber (@doc.DocumentType)</h6> @* Display the document number and type *@
+            <dl class="row">
+                @* Definition list for metadata details *@
+                <dt class="col-sm-3">Status</dt> @* Label for the status *@
+                <dd class="col-sm-9">@doc.Status</dd> @* Display the document status *@
+                <dt class="col-sm-3">Author</dt> @* Label for the author *@
+                <dd class="col-sm-9">@doc.Author</dd> @* Display the document author *@
+                <dt class="col-sm-3">Project</dt> @* Label for the associated project *@
+                <dd class="col-sm-9">@proj?.ProjectName (@proj?.ProjectCode)</dd> @* Display the project name and code *@
+                <dt class="col-sm-3">Classification</dt> @* Label for the classification *@
+                <dd class="col-sm-9">@doc.Classification</dd> @* Display the document classification *@
+                <dt class="col-sm-3">Created</dt> @* Label for the creation date *@
+                <dd class="col-sm-9">@doc.CreatedOn</dd> @* Display the document creation date *@
+            </dl>
+            @* Button to view the document *@
+            <a class="btn btn-primary"
+               href="@(doc.DocumentType!.Equals("PDF", StringComparison.OrdinalIgnoreCase) ? $"/viewpdf/DefaultConnection/{doc.DocumentId}" : $"/viewtiff/DefaultConnection/{doc.DocumentId}")"
+               target="_blank">
+                View Document
+            </a>
+        </div>
+    </div>
+}
+
+@* ============================================================================
+   Code-Behind Logic for the ViewDoc Page
+   ============================================================================ *@
+@code {
+    [Parameter] public string Database { get; set; } = "DefaultConnection"; @* Database parameter with a default value *@
+    [Parameter] public int DocumentId { get; set; } @* Document ID parameter *@
+    Document? doc; @* Holds the document metadata *@
+    Project? proj; @* Holds the associated project metadata *@
+    bool isLoading = true; @* Flag to indicate if the data is still loading *@
+    string accessError = null!; @* Holds any access error message *@
+    string? currentUsername;
+    ApplicationUser? currentUser;
+
+    @* ========================================================================
+       OnParametersSetAsync
+       ========================================================================
+       Purpose: Fetches the document and project metadata from the database 
+       when the parameters (Database and DocumentId) are set.
+    *@
+    protected override async Task OnParametersSetAsync()
+    {
+        isLoading = true; @* Set loading flag to true when starting to load data *@
+        accessError = null!; @* Reset access error message *@
+        try
+        {
+            // Get current user
+            var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+            currentUsername = authState.User.Identity?.Name;
+
+            if (string.IsNullOrEmpty(currentUsername))
+            {
+                accessError = "You must be authenticated to view documents.";
+                return;
+            }
+
+            currentUser = await UserService.GetUserByUsernameAsync(currentUsername);
+            if (currentUser == null)
+            {
+                accessError = "User not found in the system.";
+                return;
+            }
+
+            // First, fetch the document to get the project ID
+            doc = await Repo.GetDocumentAsync(Database, DocumentId);
+            if (doc == null)
+            {
+                // Document not found - this will be handled by the UI
+                return;
+            }
+
+            // Check if user is a global admin
+            var userRoles = await UserService.GetUserRolesAsync(currentUser.UserId);
+            var isGlobalAdmin = userRoles.Any(r => r.Name == "Admin");
+
+            if (!isGlobalAdmin)
+            {
+                // For non-admin users, validate project access
+                if (!doc.ProjectId.HasValue || !await UserProjectAccessService.UserHasProjectAccessAsync(currentUser.UserId, doc.ProjectId.Value))
+                {
+                    accessError = "You do not have permission to view documents from this project. Please contact your administrator for access.";
+                    return;
+                }
+            }
+
+            // If we get here, user has access - load the rest of the data
+            if (doc != null && doc.ProjectId.HasValue)
+            {
+                proj = await Repo.GetProjectAsync(Database, doc.ProjectId.Value);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Error loading document details: {ex.Message}");
+            accessError = "An error occurred while loading the document. Please try again.";
+        }
+        finally
+        {
+            isLoading = false; @* Set loading flag to false when data loading is complete *@
+        }
+    }
+}

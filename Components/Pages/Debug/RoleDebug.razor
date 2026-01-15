@@ -1,0 +1,581 @@
+﻿#if DEBUG
+@page "/debug/roles"
+@using DV.Web.Services
+@using DV.Shared.Security
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.AspNetCore.Authorization
+@inject RoleContextService RoleContext
+@inject IServiceProvider ServiceProvider
+@inject AuthenticationStateProvider AuthStateProvider
+@inject IJSRuntime JSRuntime
+@inject RoleService RoleService
+@inject IAuthorizationService AuthorizationService
+@inject NavigationManager Navigation
+@rendermode InteractiveServer
+@attribute [Authorize]
+
+<PageTitle>Role Debug Information</PageTitle>
+
+@* Development-only debug page with admin authorization check *@
+
+@if (!isAuthorized)
+{
+    <div class="container mt-4">
+        <div class="alert alert-danger">
+            <h4>Access Denied</h4>
+            <p>This debug page is only available to Global Administrators in development mode.</p>
+        </div>
+    </div>
+}
+else
+{
+    <div class="container mt-4">
+        <div class="row">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header bg-info text-white">
+                        <h4 class="mb-0">Role Debug Information</h4>
+                        <small class="text-light">âš ï¸ Development Mode Only</small>
+                    </div>
+                    <div class="card-body">
+                        @if (isLoading)
+                        {
+                            <div class="text-center">
+                                <div class="spinner-border text-primary" role="status"></div>
+                                <p class="mt-2">Loading debug information...</p>
+                            </div>
+                        }
+                        else
+                        {
+                        <div class="row">
+                            <div class="col-md-6">
+                                <h5>Authentication Information</h5>
+                                <table class="table table-sm">
+                                    <tr>
+                                        <td><strong>Is Authenticated:</strong></td>
+                                        <td>@isAuthenticated</td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>Username from Auth:</strong></td>
+                                        <td>@currentUsername</td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>Normalized Username:</strong></td>
+                                        <td>@normalizedUsername</td>
+                                    </tr>
+                                </table>
+
+                                <h5 class="mt-4">Database User Information</h5>
+                                @if (databaseUser != null)
+                                {
+                                    <table class="table table-sm">
+                                        <tr>
+                                            <td><strong>User ID:</strong></td>
+                                            <td>@databaseUser.UserId</td>
+                                        </tr>
+                                        <tr>
+                                            <td><strong>Username:</strong></td>
+                                            <td>@databaseUser.Username</td>
+                                        </tr>
+                                        <tr>
+                                            <td><strong>Display Name:</strong></td>
+                                            <td>@databaseUser.DisplayName</td>
+                                        </tr>
+                                        <tr>
+                                            <td><strong>Email:</strong></td>
+                                            <td>@databaseUser.Email</td>
+                                        </tr>
+                                        <tr>
+                                            <td><strong>Is Active:</strong></td>
+                                            <td>@databaseUser.IsActive</td>
+                                        </tr>
+                                        <tr>
+                                            <td><strong>Created Date:</strong></td>
+                                            <td>@databaseUser.CreatedDate.ToString("yyyy-MM-dd HH:mm:ss")</td>
+                                        </tr>
+                                    </table>
+                                }
+                                else
+                                {
+                                    <div class="alert alert-warning">
+                                        <strong>No user found in database!</strong>
+                                        @if (!string.IsNullOrEmpty(userLookupAttempt))
+                                        {
+                                            <br><small>Searched for: @userLookupAttempt</small>
+                                        }
+                                    </div>
+                                }
+                            </div>
+
+                            <div class="col-md-6">
+                                <h5>Role Context Service Information</h5>
+                                <table class="table table-sm">
+                                    <tr>
+                                        <td><strong>Context Username:</strong></td>
+                                        <td>@RoleContext.CurrentUsername</td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>User Roles Count:</strong></td>
+                                        <td>@RoleContext.UserRoles.Count</td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>Has Multiple Roles:</strong></td>
+                                        <td>@RoleContext.HasMultipleRoles</td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>Current Role:</strong></td>
+                                        <td>@(RoleContext.CurrentRole?.Name ?? "None")</td>
+                                    </tr>
+                                </table>
+
+                                <h5 class="mt-4">Assigned Roles</h5>
+                                @if (RoleContext.UserRoles.Any())
+                                {
+                                    <ul class="list-group">
+                                        @foreach (var role in RoleContext.UserRoles)
+                                        {
+                                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                                <div>
+                                                    <i class="@RoleContext.GetRoleIcon(role.Name) @RoleContext.GetRoleColor(role.Name) me-2"></i>
+                                                    <strong>@role.Name</strong>
+                                                    <br>
+                                                    <small class="text-muted">ID: @role.RoleId</small>
+                                                </div>
+                                                @if (RoleContext.IsCurrentRole(role.Name))
+                                                {
+                                                    <span class="badge bg-success">Current</span>
+                                                }
+                                            </li>
+                                        }
+                                    </ul>
+                                }
+                                else
+                                {
+                                    <div class="alert alert-warning">
+                                        <strong>No roles assigned to this user!</strong>
+                                    </div>
+                                }
+
+                                <h5 class="mt-4">Database Roles (Direct Query)</h5>
+                                @if (databaseRoles.Any())
+                                {
+                                    <ul class="list-group">
+                                        @foreach (var role in databaseRoles)
+                                        {
+                                            <li class="list-group-item">
+                                                <strong>@role.Name</strong> (ID: @role.RoleId)
+                                                <br>
+                                                <small class="text-muted">@role.Description</small>
+                                            </li>
+                                        }
+                                    </ul>
+                                }
+                                else
+                                {
+                                    <div class="alert alert-danger">
+                                        <strong>No roles found in direct database query!</strong>
+                                    </div>
+                                }
+                            </div>
+                        </div>
+
+                        <div class="row mt-4">
+                            <div class="col-12">
+                                <h5>Actions</h5>
+                                <div class="btn-group">
+                                    <button class="btn btn-primary" @onclick="RefreshData">
+                                        <i class="bi bi-arrow-clockwise me-1"></i>
+                                        Refresh Data
+                                    </button>
+                                    <button class="btn btn-secondary" @onclick="InitializeRoleContext">
+                                        <i class="bi bi-gear me-1"></i>
+                                        Re-initialize Role Context
+                                    </button>
+                                    <button class="btn btn-info" @onclick="ShowConsoleInfo">
+                                        <i class="bi bi-terminal me-1"></i>
+                                        Log to Console
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        @if (!string.IsNullOrEmpty(errorMessage))
+                        {
+                            <div class="alert alert-danger mt-3">
+                                <strong>Error:</strong> @errorMessage
+                            </div>
+                        }
+
+                        @if (currentUsername?.Equals("AIPC\\neilr", StringComparison.OrdinalIgnoreCase) == true)
+                        {
+                            <div class="alert alert-info mt-3">
+                                <h5><i class="bi bi-info-circle me-2"></i>Special Diagnostic for AIPC\neilr</h5>
+                                <p><strong>Expected Configuration:</strong></p>
+                                <ul>
+                                    <li>User should exist in database with ReadOnly AND Editor roles (global)</li>
+                                    <li>User should have DataOwner role for Bills and Receipts project (project-specific)</li>
+                                    <li>Should be redirected to SelectRole.razor to choose between roles</li>
+                                    <li>Should have project access to the invoices project</li>
+                                </ul>
+                                <p><strong>Current Status:</strong></p>
+                                <ul>
+                                    <li>User in DB: <span class="badge @(databaseUser != null ? "bg-success" : "bg-danger")">@(databaseUser != null ? "YES" : "NO")</span></li>
+                                    <li>Has ReadOnly role: <span class="badge @(databaseRoles.Any(r => r.Name == "ReadOnly") ? "bg-success" : "bg-danger")">@(databaseRoles.Any(r => r.Name == "ReadOnly") ? "YES" : "NO")</span></li>
+                                    <li>Has Editor role: <span class="badge @(databaseRoles.Any(r => r.Name == "Editor") ? "bg-success" : "bg-danger")">@(databaseRoles.Any(r => r.Name == "Editor") ? "YES" : "NO")</span></li>
+                                    <li>Has DataOwner role: <span class="badge @(databaseRoles.Any(r => r.Name == "DataOwner") ? "bg-success" : "bg-warning")">@(databaseRoles.Any(r => r.Name == "DataOwner") ? "YES" : "CHECK PROJECT ROLES")</span></li>
+                                    <li>RoleContext loaded: <span class="badge @(RoleContext.UserRoles.Any() ? "bg-success" : "bg-danger")">@(RoleContext.UserRoles.Any() ? "YES" : "NO")</span></li>
+                                    <li>Multiple roles detected: <span class="badge @(RoleContext.HasMultipleRoles ? "bg-success" : "bg-warning")">@(RoleContext.HasMultipleRoles ? "YES" : "NO")</span></li>
+                                    <li>Total roles in context: <span class="badge bg-info">@RoleContext.UserRoles.Count</span></li>
+                                </ul>
+                                
+                                @if (RoleContext.UserRoles.Count >= 3)
+                                {
+                                    <div class="alert alert-success">
+                                        <strong>? User has multiple roles including project-specific ones!</strong> Should be redirected to SelectRole page.
+                                        <br><small>Expected: ReadOnly, Editor, DataOwner. Check SelectRole page for all roles.</small>
+                                    </div>
+                                }
+                                else if (databaseRoles.Count >= 2 && databaseRoles.Any(r => r.Name == "ReadOnly") && databaseRoles.Any(r => r.Name == "Editor"))
+                                {
+                                    <div class="alert alert-warning">
+                                        <strong>? Missing DataOwner project role!</strong> User has global roles but may be missing project-specific DataOwner role.
+                                        <br><small>Check if user is assigned DataOwner role for Bills and Receipts project.</small>
+                                    </div>
+                                }
+                                else if (databaseRoles.Any(r => r.Name == "ReadOnly") && !databaseRoles.Any(r => r.Name == "Editor"))
+                                {
+                                    <div class="alert alert-warning">
+                                        <strong>? Missing Editor role!</strong> Will assign it now.
+                                        <br><small>Click "Refresh Data" after assignment to verify.</small>
+                                    </div>
+                                    <button class="btn btn-sm btn-warning mt-2" @onclick="AssignEditorRole">
+                                        <i class="bi bi-plus-circle me-1"></i>
+                                        Assign Editor Role
+                                    </button>
+                                }
+                                else
+                                {
+                                    <div class="alert alert-warning">
+                                        <strong>? Role configuration incomplete!</strong> Expected ReadOnly + Editor + DataOwner roles.
+                                        <br><small>Use the button below to set up the complete configuration.</small>
+                                    </div>
+                                    <button class="btn btn-sm btn-primary mt-2" @onclick="SetupCompleteRoleConfiguration">
+                                        <i class="bi bi-gear me-1"></i>
+                                        Setup Complete Role Configuration
+                                    </button>
+                                }
+                            </div>
+                        }
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+}
+
+@code {
+    private bool isLoading = true;
+    private bool isAuthenticated = false;
+    private bool isAuthorized = false;
+    private string? currentUsername;
+    private string? normalizedUsername;
+    private string? userLookupAttempt;
+    private ApplicationUser? databaseUser;
+    private List<ApplicationRole> databaseRoles = new();
+    private string? errorMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Check if user has global admin authorization in development mode
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        if (!authState.User.Identity?.IsAuthenticated == true)
+        {
+            Navigation.NavigateTo("/login");
+            return;
+        }
+
+        var authResult = await AuthorizationService.AuthorizeAsync(authState.User, "GlobalAdmin");
+        if (!authResult.Succeeded)
+        {
+            Navigation.NavigateTo("/AccessDenied");
+            return;
+        }
+
+        isAuthorized = true;
+        await LoadDebugData();
+    }
+
+    private async Task LoadDebugData()
+    {
+        try
+        {
+            isLoading = true;
+            errorMessage = null;
+            databaseRoles.Clear();
+            userLookupAttempt = null;
+
+            // Get authentication state
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            isAuthenticated = authState.User.Identity?.IsAuthenticated == true;
+            currentUsername = authState.User.Identity?.Name;
+            
+            Console.WriteLine($"RoleDebug: Authentication check - IsAuthenticated: {isAuthenticated}, Username: {currentUsername}");
+            
+            if (!string.IsNullOrEmpty(currentUsername))
+            {
+                normalizedUsername = NormalizeUsername(currentUsername);
+                userLookupAttempt = currentUsername;
+                
+                // Create a separate scope for this debug page to avoid DbContext conflicts
+                using var scope = ServiceProvider.CreateScope();
+                var scopedUserService = scope.ServiceProvider.GetRequiredService<UserService>();
+                
+                // Step 1: Check if user exists
+                Console.WriteLine($"RoleDebug: Looking for user: '{currentUsername}'");
+                databaseUser = await scopedUserService.GetUserByUsernameAsync(currentUsername);
+                Console.WriteLine($"RoleDebug: User lookup result: {databaseUser != null} (ID: {databaseUser?.UserId})");
+                
+                if (databaseUser == null)
+                {
+                    // Step 2: Try to create the user if not found
+                    Console.WriteLine($"RoleDebug: User not found, attempting to create user");
+                    var displayName = normalizedUsername;
+                    var email = $"{normalizedUsername}@example.com";
+                    
+                    try
+                    {
+                        databaseUser = await scopedUserService.EnsureUserExistsAsync(currentUsername, displayName, email);
+                        Console.WriteLine($"RoleDebug: User created successfully with ID: {databaseUser.UserId}");
+                    }
+                    catch (Exception createEx)
+                    {
+                        Console.WriteLine($"RoleDebug: Failed to create user: {createEx.Message}");
+                        errorMessage = $"Failed to create user: {createEx.Message}";
+                    }
+                }
+                
+                if (databaseUser != null)
+                {
+                    // Step 3: Get roles directly from database (using the same scoped service)
+                    Console.WriteLine($"RoleDebug: Getting roles for user ID: {databaseUser.UserId}");
+                    try
+                    {
+                        databaseRoles = await scopedUserService.GetUserRolesAsync(databaseUser.UserId);
+                        Console.WriteLine($"RoleDebug: Found {databaseRoles.Count} roles directly from DB");
+                        
+                        if (databaseRoles.Any())
+                        {
+                            Console.WriteLine($"RoleDebug: Roles: {string.Join(", ", databaseRoles.Select(r => $"{r.Name} (ID: {r.RoleId})"))}");
+                        }
+                        else
+                        {
+                            Console.WriteLine("RoleDebug: No roles assigned to this user!");
+                            
+                            // Step 4: Check if this is the specific user that needs ReadOnly role
+                            if (currentUsername?.Equals("AIPC\\neilr", StringComparison.OrdinalIgnoreCase) == true)
+                            {
+                                Console.WriteLine("RoleDebug: This is AIPC\\neilr - checking ReadOnly role assignment");
+                                await AssignReadOnlyRoleIfNeeded(scopedUserService, databaseUser.UserId);
+                                
+                                // Re-fetch roles after assignment
+                                databaseRoles = await scopedUserService.GetUserRolesAsync(databaseUser.UserId);
+                                Console.WriteLine($"RoleDebug: After role assignment attempt, user has {databaseRoles.Count} roles");
+                            }
+                        }
+                    }
+                    catch (Exception roleEx)
+                    {
+                        Console.WriteLine($"RoleDebug: Error getting roles: {roleEx.Message}");
+                        errorMessage = $"Error getting roles: {roleEx.Message}";
+                    }
+                }
+                else
+                {
+                    errorMessage = $"User '{currentUsername}' could not be found or created in database.";
+                    Console.WriteLine($"RoleDebug: {errorMessage}");
+                }
+            }
+
+            // Step 5: RoleContext information is already loaded by dependency injection
+            Console.WriteLine($"RoleDebug: RoleContext - Current roles: {RoleContext.UserRoles.Count}");
+            if (RoleContext.UserRoles.Any())
+            {
+                Console.WriteLine($"RoleDebug: RoleContext roles: {string.Join(", ", RoleContext.UserRoles.Select(r => r.Name))}");
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error: {ex.Message}";
+            Console.WriteLine($"RoleDebug LoadDebugData Error: {ex}");
+            Console.WriteLine($"RoleDebug Error Stack Trace: {ex.StackTrace}");
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task AssignReadOnlyRoleIfNeeded(UserService userService, int userId)
+    {
+        try
+        {
+            // Check if ReadOnly role exists
+            using var scope = ServiceProvider.CreateScope();
+            var roleService = scope.ServiceProvider.GetRequiredService<RoleService>();
+            var allRoles = await roleService.GetAllRolesAsync();
+            var readOnlyRole = allRoles.FirstOrDefault(r => r.Name == "ReadOnly");
+            
+            if (readOnlyRole != null)
+            {
+                Console.WriteLine($"RoleDebug: Found ReadOnly role (ID: {readOnlyRole.RoleId}), assigning to user {userId}");
+                await userService.AssignRoleToUserAsync(userId, readOnlyRole.RoleId);
+                Console.WriteLine("RoleDebug: ReadOnly role assigned successfully");
+            }
+            else
+            {
+                Console.WriteLine("RoleDebug: ReadOnly role not found in system!");
+                errorMessage = "ReadOnly role not found in system - needs to be created first";
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"RoleDebug: Error assigning ReadOnly role: {ex.Message}");
+            errorMessage = $"Error assigning ReadOnly role: {ex.Message}";
+        }
+    }
+
+    private async Task RefreshData()
+    {
+        await LoadDebugData();
+        StateHasChanged();
+    }
+
+    private async Task InitializeRoleContext()
+    {
+        try
+        {
+            // Use a separate scope for role context initialization to avoid conflicts
+            using var scope = ServiceProvider.CreateScope();
+            var scopedRoleContext = scope.ServiceProvider.GetRequiredService<RoleContextService>();
+            
+            var result = await scopedRoleContext.InitializeAsync();
+            await JSRuntime.InvokeVoidAsync("alert", $"Role context initialization result: {result}");
+            await LoadDebugData();
+        }
+        catch (Exception ex)
+        {
+            await JSRuntime.InvokeVoidAsync("alert", $"Error initializing role context: {ex.Message}");
+        }
+    }
+
+    private async Task ShowConsoleInfo()
+    {
+        await JSRuntime.InvokeVoidAsync("console.log", "=== ROLE DEBUG INFORMATION ===");
+        await JSRuntime.InvokeVoidAsync("console.log", $"Is Authenticated: {isAuthenticated}");
+        await JSRuntime.InvokeVoidAsync("console.log", $"Current Username: {currentUsername}");
+        await JSRuntime.InvokeVoidAsync("console.log", $"Normalized Username: {normalizedUsername}");
+        await JSRuntime.InvokeVoidAsync("console.log", $"User Lookup Attempt: {userLookupAttempt}");
+        await JSRuntime.InvokeVoidAsync("console.log", $"Database User: {databaseUser?.Username} (ID: {databaseUser?.UserId})");
+        await JSRuntime.InvokeVoidAsync("console.log", $"Database Roles Count: {databaseRoles.Count}");
+        await JSRuntime.InvokeVoidAsync("console.log", $"Role Context Roles Count: {RoleContext.UserRoles.Count}");
+        await JSRuntime.InvokeVoidAsync("console.log", $"Current Role: {RoleContext.CurrentRole?.Name}");
+        
+        if (databaseRoles.Any())
+        {
+            await JSRuntime.InvokeVoidAsync("console.log", $"Database Roles: {string.Join(", ", databaseRoles.Select(r => r.Name))}");
+        }
+        
+        if (RoleContext.UserRoles.Any())
+        {
+            await JSRuntime.InvokeVoidAsync("console.log", $"Context Roles: {string.Join(", ", RoleContext.UserRoles.Select(r => r.Name))}");
+        }
+        
+        await JSRuntime.InvokeVoidAsync("console.log", "=== END DEBUG INFO ===");
+    }
+
+    private async Task AssignEditorRole()
+    {
+        try
+        {
+            if (databaseUser != null)
+            {
+                using var scope = ServiceProvider.CreateScope();
+                var scopedUserService = scope.ServiceProvider.GetRequiredService<UserService>();
+                var scopedRoleService = scope.ServiceProvider.GetRequiredService<RoleService>();
+                
+                var allRoles = await scopedRoleService.GetAllRolesAsync();
+                var editorRole = allRoles.FirstOrDefault(r => r.Name == "Editor");
+                
+                if (editorRole != null)
+                {
+                    await scopedUserService.AssignRoleToUserAsync(databaseUser.UserId, editorRole.RoleId);
+                    await LoadDebugData(); // Refresh the data
+                    await JSRuntime.InvokeVoidAsync("alert", "Editor role assigned successfully!");
+                }
+                else
+                {
+                    await JSRuntime.InvokeVoidAsync("alert", "Editor role not found in system - needs to be created first");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            await JSRuntime.InvokeVoidAsync("alert", $"Error assigning Editor role: {ex.Message}");
+        }
+    }
+
+    private async Task SetupCompleteRoleConfiguration()
+    {
+        try
+        {
+            if (databaseUser != null)
+            {
+                using var scope = ServiceProvider.CreateScope();
+                var scopedUserService = scope.ServiceProvider.GetRequiredService<UserService>();
+                var scopedRoleService = scope.ServiceProvider.GetRequiredService<RoleService>();
+                
+                var allRoles = await scopedRoleService.GetAllRolesAsync();
+                var readOnlyRole = allRoles.FirstOrDefault(r => r.Name == "ReadOnly");
+                var editorRole = allRoles.FirstOrDefault(r => r.Name == "Editor");
+                
+                var messages = new List<string>();
+                
+                // Assign ReadOnly role if missing
+                if (readOnlyRole != null && !databaseRoles.Any(r => r.Name == "ReadOnly"))
+                {
+                    await scopedUserService.AssignRoleToUserAsync(databaseUser.UserId, readOnlyRole.RoleId);
+                    messages.Add("ReadOnly role assigned");
+                }
+                
+                // Assign Editor role if missing
+                if (editorRole != null && !databaseRoles.Any(r => r.Name == "Editor"))
+                {
+                    await scopedUserService.AssignRoleToUserAsync(databaseUser.UserId, editorRole.RoleId);
+                    messages.Add("Editor role assigned");
+                }
+                
+                await LoadDebugData(); // Refresh the data
+                
+                var message = messages.Any() ? 
+                    $"Setup complete! {string.Join(", ", messages)}." : 
+                    "User already has both required roles.";
+                    
+                await JSRuntime.InvokeVoidAsync("alert", message);
+            }
+        }
+        catch (Exception ex)
+        {
+            await JSRuntime.InvokeVoidAsync("alert", $"Error setting up role configuration: {ex.Message}");
+        }
+    }
+
+    private string NormalizeUsername(string username)
+    {
+        if (string.IsNullOrWhiteSpace(username)) return string.Empty;
+        if (username.Contains('\\')) return username.Split('\\')[1];
+        return username;
+    }
+}
+#endif
+}

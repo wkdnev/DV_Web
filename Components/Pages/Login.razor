@@ -1,0 +1,112 @@
+﻿@page "/login"
+@using Microsoft.AspNetCore.Authentication
+@using Microsoft.AspNetCore.Authentication.Negotiate
+@using Microsoft.AspNetCore.Components.Authorization
+@using DV.Shared.Security
+@using DV.Web.Services
+@inject NavigationManager NavigationManager
+@inject UserService UserService
+@inject AuthenticationStateProvider AuthenticationStateProvider
+
+<PageTitle>Login</PageTitle>
+
+<div class="row justify-content-center">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header bg-primary text-white">
+                <h5 class="mb-0">Authentication Status</h5>
+            </div>
+            <div class="card-body">
+                @if (loading)
+                {
+                    <p><em>Checking authentication status...</em></p>
+                }
+                else if (isAuthenticated)
+                {
+                    <div class="alert alert-success">
+                        <h4>Authenticated!</h4>
+                        <p>You are logged in as: <strong>@username</strong></p>
+                        <p>Your display name: <strong>@displayName</strong></p>
+                        <p>Your roles: <strong>@string.Join(", ", userRoles.Select(r => r.Name))</strong></p>
+                    </div>
+                    <button class="btn btn-primary" @onclick="NavigateToHome">Go to Dashboard</button>
+                }
+                else
+                {
+                    <div class="alert alert-warning">
+                        <h4>Not Authenticated</h4>
+                        <p>You are not currently authenticated. Please contact your system administrator.</p>
+                    </div>
+                    <p>
+                        OpenID Connect Authentication is being used in this application.
+                    </p>
+                    <a href="/login?returnUrl=/" class="btn btn-primary">Log In</a>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private bool loading = true;
+    private bool isAuthenticated = false;
+    private string username = string.Empty;
+    private string displayName = string.Empty;
+    private List<ApplicationRole> userRoles = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await CheckAuthenticationStatus();
+    }
+
+    private async Task CheckAuthenticationStatus()
+    {
+        loading = true;
+
+        try
+        {
+            var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+            isAuthenticated = authState.User.Identity?.IsAuthenticated ?? false;
+
+            if (isAuthenticated)
+            {
+                username = authState.User.Identity?.Name ?? string.Empty;
+
+                // Create or update user in the database
+                // For simplicity, we're using the domain username as the display name too
+                var displayNameFromAD = username.Contains('\\')
+                    ? username.Split('\\')[1]
+                    : username;
+
+                var user = await UserService.EnsureUserExistsAsync(
+                    username,
+                    displayNameFromAD,
+                    $"{displayNameFromAD}@example.com");
+
+                displayName = user.DisplayName;
+
+                // Load user roles
+                userRoles = await UserService.GetUserRolesAsync(user.UserId);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Authentication error: {ex.Message}");
+            isAuthenticated = false;
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private void NavigateToHome()
+    {
+        NavigationManager.NavigateTo("/");
+    }
+
+    private async Task RefreshPage()
+    {
+        await CheckAuthenticationStatus();
+    }
+}

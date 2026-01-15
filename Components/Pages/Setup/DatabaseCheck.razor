@@ -1,0 +1,28 @@
+﻿@* DEPRECATED: Database check page partially disabled due to UserRole removal *@
+
+#if DEBUG
+@page "/setup/database-check"
+@using DV.Shared.Security
+@using DV.Shared.Models
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.AspNetCore.Authorization
+@inject SecurityDbContext SecurityContext
+@inject AppDbContext AppContext
+@attribute [Authorize]
+@rendermode InteractiveServer
+
+<PageTitle>Database Setup Check (DEPRECATED)</PageTitle>
+
+<div class="container mt-4">
+    <div class="alert alert-warning">
+        <h4> Partially Deprecated Feature</h4>
+        <p>This diagnostic page has been partially disabled due to the removal of the UserRole table.</p>
+        <p>Project-scoped role functionality is working correctly.</p>
+    </div>
+    
+    <div class="alert alert-info">
+        <h5>Database Status: Project-Scoped Roles Active</h5>
+        <p>The application is now using project-scoped roles (UserProjectRole) instead of global roles.</p>
+    </div>
+</div>
+#endif

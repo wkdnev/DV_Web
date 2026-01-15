@@ -1,0 +1,230 @@
+﻿@using Microsoft.AspNetCore.Components.Authorization
+@using DV.Web.Services
+@inject RoleContextService RoleContext
+@implements IDisposable
+
+<div class="top-row ps-3 navbar navbar-dark">
+    <div class="container-fluid">
+        <a class="navbar-brand" href="">DV.Web</a>
+    </div>
+</div>
+
+<input type="checkbox" title="Navigation menu" class="navbar-toggler" />
+
+<div class="nav-scrollable" onclick="document.querySelector('.navbar-toggler').click()">
+    <nav class="flex-column">
+        <!-- Home - Available to all roles -->
+        <div class="nav-item px-3">
+            <NavLink class="nav-link" href="" Match="NavLinkMatch.All">
+                <span class="bi bi-house-door-fill-nav-menu" aria-hidden="true"></span> Home
+            </NavLink>
+        </div>
+
+        <!-- Admin Navigation - Only for Admin role -->
+        @if (IsCurrentRole("Admin"))
+        {
+            <div class="nav-item px-3">
+                <NavLink class="nav-link" href="/admin">
+                    <span class="bi bi-gear-fill" aria-hidden="true"></span> Administration
+                </NavLink>
+            </div>
+        }
+
+        <!-- Role-specific Dashboards -->
+        @if (IsCurrentRole("Auditor"))
+        {
+            <div class="nav-item px-3">
+                <NavLink class="nav-link" href="/auditor/dashboard">
+                    <span class="bi bi-clipboard-data" aria-hidden="true"></span> Auditor Dashboard
+                </NavLink>
+            </div>
+        }
+
+        @if (IsCurrentRole("Editor"))
+        {
+            <div class="nav-item px-3">
+                <NavLink class="nav-link" href="/editor/dashboard">
+                    <span class="bi bi-pencil-square" aria-hidden="true"></span> Editor Dashboard
+                </NavLink>
+            </div>
+        }
+
+        @if (IsCurrentRole("DataOwner"))
+        {
+            <div class="nav-item px-3">
+                <NavLink class="nav-link" href="/dataowner/dashboard">
+                    <span class="bi bi-person-badge" aria-hidden="true"></span> Data Owner Dashboard
+                </NavLink>
+            </div>
+        }
+
+        @if (IsCurrentRole("Security"))
+        {
+            <div class="nav-item px-3">
+                <NavLink class="nav-link" href="/security/dashboard">
+                    <span class="bi bi-shield-lock" aria-hidden="true"></span> Security Dashboard
+                </NavLink>
+            </div>
+        }
+
+        <!-- Additional navigation items based on role permissions -->
+        @if (CanAccessDocuments())
+        {
+            <div class="nav-item px-3">
+                <NavLink class="nav-link" href="/documents">
+                    <span class="bi bi-file-earmark-text" aria-hidden="true"></span> Documents
+                </NavLink>
+            </div>
+        }
+
+        @if (CanAccessReports())
+        {
+            <div class="nav-item px-3">
+                <NavLink class="nav-link" href="/reports">
+                    <span class="bi bi-graph-up" aria-hidden="true"></span> Reports
+                </NavLink>
+            </div>
+        }
+
+        @if (CanAccessAuditLogs())
+        {
+            <div class="nav-item px-3">
+                <NavLink class="nav-link" href="/audit">
+                    <span class="bi bi-list-check" aria-hidden="true"></span> Audit Logs
+                </NavLink>
+            </div>
+        }
+
+        <!-- Role indicator (visible at bottom of nav for context) -->
+        @if (RoleContext.CurrentRole != null)
+        {
+            <div class="nav-item px-3 mt-auto">
+                <div class="role-indicator">
+                    <small class="text-muted d-block">Current Role:</small>
+                    <span class="badge bg-secondary d-flex align-items-center">
+                        <i class="@RoleContext.GetRoleIcon(RoleContext.CurrentRole.Name) me-1"></i>
+                        @RoleContext.CurrentRole.Name
+                    </span>
+                </div>
+            </div>
+        }
+    </nav>
+</div>
+
+<style>
+    .role-indicator {
+        padding: 0.5rem;
+        margin-top: 1rem;
+        border-top: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .role-indicator .badge {
+        font-size: 0.75rem;
+        padding: 0.4rem 0.6rem;
+        font-weight: normal;
+    }
+
+    .nav-scrollable {
+        display: flex;
+        flex-direction: column;
+        height: calc(100vh - 3.5rem);
+    }
+
+    .nav-scrollable nav {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+    }
+</style>
+
+@code {
+    private bool hasInitialized = false;
+
+    protected override void OnInitialized()
+    {
+        // Don't initialize role context immediately to avoid conflicts with other components
+        // Subscribe to role changes to update navigation
+        RoleContext.RoleChanged += OnRoleChanged;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && !hasInitialized)
+        {
+            hasInitialized = true;
+            
+            // Initialize the role context after initial render if not already done
+            // This prevents conflicts with other components during initialization
+            if (RoleContext.CurrentRole == null && RoleContext.UserRoles.Count == 0)
+            {
+                try
+                {
+                    await RoleContext.InitializeAsync();
+                    StateHasChanged(); // Update the UI after role context is loaded
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"NavMenu: Error initializing role context: {ex.Message}");
+                }
+            }
+        }
+    }
+
+    private async void OnRoleChanged(object? sender, RoleChangedEventArgs e)
+    {
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private bool IsCurrentRole(string roleName)
+    {
+        return RoleContext.IsCurrentRole(roleName);
+    }
+
+    private bool CanAccessDocuments()
+    {
+        var currentRole = RoleContext.CurrentRole?.Name?.ToLower();
+        return currentRole switch
+        {
+            "admin" => true,
+            "editor" => true,
+            "auditor" => true,
+            "dataowner" => true,
+            "security" => true,
+            "readonly" => true,
+            _ => false
+        };
+    }
+
+    private bool CanAccessReports()
+    {
+        var currentRole = RoleContext.CurrentRole?.Name?.ToLower();
+        return currentRole switch
+        {
+            "admin" => true,
+            "auditor" => true,
+            "dataowner" => true,
+            "security" => true,
+            _ => false
+        };
+    }
+
+    private bool CanAccessAuditLogs()
+    {
+        var currentRole = RoleContext.CurrentRole?.Name?.ToLower();
+        return currentRole switch
+        {
+            "admin" => true,
+            "auditor" => true,
+            "security" => true,
+            _ => false
+        };
+    }
+
+    public void Dispose()
+    {
+        if (RoleContext != null)
+        {
+            RoleContext.RoleChanged -= OnRoleChanged;
+        }
+    }
+}

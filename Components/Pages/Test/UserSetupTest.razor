@@ -1,0 +1,337 @@
+﻿#if DEBUG
+@page "/test/user-setup"
+@using DV.Web.Services
+@using DV.Shared.Security
+@using Microsoft.AspNetCore.Components.Authorization
+@inject AuthenticationStateProvider AuthStateProvider
+@inject UserService UserService
+@inject RoleService RoleService
+@inject UserProjectAccessService UserProjectAccessService
+@inject ProjectService ProjectService
+@inject IJSRuntime JSRuntime
+@inject IServiceProvider ServiceProvider
+@rendermode InteractiveServer
+
+<PageTitle>User Setup Test - AIPC\neilr</PageTitle>
+
+<div class="container mt-4">
+    <div class="card">
+        <div class="card-header bg-primary text-white">
+            <h4 class="mb-0">User Setup Test for AIPC\neilr</h4>
+            <small>This page will automatically set up the user with ReadOnly role and project access</small>
+        </div>
+        <div class="card-body">
+            @if (isLoading)
+            {
+                <div class="text-center">
+                    <div class="spinner-border text-primary" role="status"></div>
+                    <p class="mt-2">Setting up user...</p>
+                </div>
+            }
+            else
+            {
+                <div class="row">
+                    <div class="col-12">
+                        <h5>Setup Results</h5>
+                        @foreach (var step in setupSteps)
+                        {
+                            <div class="alert @(step.Success ? "alert-success" : "alert-danger")">
+                                <i class="bi @(step.Success ? "bi-check-circle" : "bi-x-circle") me-2"></i>
+                                <strong>@step.StepName:</strong> @step.Message
+                            </div>
+                        }
+
+                        @if (setupComplete && allStepsSuccessful)
+                        {
+                            <div class="alert alert-success">
+                                <h5><i class="bi bi-check-circle me-2"></i>Setup Complete!</h5>
+                                <p>User AIPC\neilr has been successfully configured with:</p>
+                                <ul>
+                                    <li>? User account created in database</li>
+                                    <li>? ReadOnly role assigned</li>
+                                    <li>? Project access granted to Invoices project</li>
+                                </ul>
+                                <p><strong>Next Steps:</strong></p>
+                                <ol>
+                                    <li>Navigate to the home page (<code>/</code>)</li>
+                                    <li>User should see the DocumentSearch interface</li>
+                                    <li>Should be able to select "Invoices" project and search</li>
+                                </ol>
+                                <div class="mt-3">
+                                    <a href="/" class="btn btn-primary">Go to Home Page</a>
+                                    <a href="/debug/roles" class="btn btn-secondary ms-2">Debug Roles</a>
+                                </div>
+                            </div>
+                        }
+
+                        <div class="mt-4">
+                            <button class="btn btn-warning" @onclick="RerunSetup">
+                                <i class="bi bi-arrow-clockwise me-2"></i>
+                                Re-run Setup
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            }
+        </div>
+    </div>
+</div>
+
+@code {
+    private bool isLoading = true;
+    private bool setupComplete = false;
+    private bool allStepsSuccessful = false;
+    private List<SetupStep> setupSteps = new();
+
+    public class SetupStep
+    {
+        public string StepName { get; set; } = "";
+        public string Message { get; set; } = "";
+        public bool Success { get; set; }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await RunUserSetup();
+    }
+
+    private async Task RunUserSetup()
+    {
+        isLoading = true;
+        setupSteps.Clear();
+        setupComplete = false;
+        allStepsSuccessful = false;
+
+        try
+        {
+            // Step 1: Check authentication
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var isAuthenticated = authState.User.Identity?.IsAuthenticated == true;
+            var currentUsername = authState.User.Identity?.Name;
+
+            if (!isAuthenticated || string.IsNullOrEmpty(currentUsername))
+            {
+                setupSteps.Add(new SetupStep
+                {
+                    StepName = "Authentication Check",
+                    Message = "User is not authenticated or username is empty",
+                    Success = false
+                });
+                return;
+            }
+
+            setupSteps.Add(new SetupStep
+            {
+                StepName = "Authentication Check",
+                Message = $"User authenticated as: {currentUsername}",
+                Success = true
+            });
+
+            // Check if this is the target user
+            if (!currentUsername.Equals("AIPC\\neilr", StringComparison.OrdinalIgnoreCase))
+            {
+                setupSteps.Add(new SetupStep
+                {
+                    StepName = "User Verification",
+                    Message = $"This setup is specifically for AIPC\\neilr, but current user is: {currentUsername}",
+                    Success = false
+                });
+                return;
+            }
+
+            setupSteps.Add(new SetupStep
+            {
+                StepName = "User Verification",
+                Message = "Confirmed user is AIPC\\neilr",
+                Success = true
+            });
+
+            using var scope = ServiceProvider.CreateScope();
+            var scopedUserService = scope.ServiceProvider.GetRequiredService<UserService>();
+            var scopedRoleService = scope.ServiceProvider.GetRequiredService<RoleService>();
+
+            // Step 2: Create/verify user in database
+            var displayName = "neilr";
+            var email = "neilr@aipc.com";
+            
+            ApplicationUser user;
+            try
+            {
+                user = await scopedUserService.EnsureUserExistsAsync(currentUsername, displayName, email);
+                setupSteps.Add(new SetupStep
+                {
+                    StepName = "User Creation",
+                    Message = $"User created/verified in database with ID: {user.UserId}",
+                    Success = true
+                });
+            }
+            catch (Exception ex)
+            {
+                setupSteps.Add(new SetupStep
+                {
+                    StepName = "User Creation",
+                    Message = $"Failed to create user: {ex.Message}",
+                    Success = false
+                });
+                return;
+            }
+
+            // Step 3: Check/create ReadOnly role
+            var allRoles = await scopedRoleService.GetAllRolesAsync();
+            var readOnlyRole = allRoles.FirstOrDefault(r => r.Name == "ReadOnly");
+            
+            if (readOnlyRole == null)
+            {
+                try
+                {
+                    readOnlyRole = await scopedRoleService.CreateRoleAsync("ReadOnly", "Can view documents but not edit");
+                    setupSteps.Add(new SetupStep
+                    {
+                        StepName = "ReadOnly Role Creation",
+                        Message = $"ReadOnly role created with ID: {readOnlyRole.RoleId}",
+                        Success = true
+                    });
+                }
+                catch (Exception ex)
+                {
+                    setupSteps.Add(new SetupStep
+                    {
+                        StepName = "ReadOnly Role Creation",
+                        Message = $"Failed to create ReadOnly role: {ex.Message}",
+                        Success = false
+                    });
+                    return;
+                }
+            }
+            else
+            {
+                setupSteps.Add(new SetupStep
+                {
+                    StepName = "ReadOnly Role Check",
+                    Message = $"ReadOnly role already exists with ID: {readOnlyRole.RoleId}",
+                    Success = true
+                });
+            }
+
+            // Step 4: Assign ReadOnly role to user
+            var userRoles = await scopedUserService.GetUserRolesAsync(user.UserId);
+            if (!userRoles.Any(r => r.Name == "ReadOnly"))
+            {
+                try
+                {
+                    await scopedUserService.AssignRoleToUserAsync(user.UserId, readOnlyRole.RoleId);
+                    setupSteps.Add(new SetupStep
+                    {
+                        StepName = "Role Assignment",
+                        Message = "ReadOnly role assigned to user successfully",
+                        Success = true
+                    });
+                }
+                catch (Exception ex)
+                {
+                    setupSteps.Add(new SetupStep
+                    {
+                        StepName = "Role Assignment",
+                        Message = $"Failed to assign ReadOnly role: {ex.Message}",
+                        Success = false
+                    });
+                    return;
+                }
+            }
+            else
+            {
+                setupSteps.Add(new SetupStep
+                {
+                    StepName = "Role Assignment Check",
+                    Message = "User already has ReadOnly role assigned",
+                    Success = true
+                });
+            }
+
+            // Step 5: Check/create Invoices project and grant access
+            var scopedProjectService = scope.ServiceProvider.GetRequiredService<ProjectService>();
+            var scopedUserProjectAccessService = scope.ServiceProvider.GetRequiredService<UserProjectAccessService>();
+
+            var allProjects = await scopedProjectService.GetAllProjectsAsync();
+            var invoicesProject = allProjects.FirstOrDefault(p => p.ProjectName.Contains("Invoices") || p.ProjectCode == "INV001");
+
+            if (invoicesProject == null)
+            {
+                setupSteps.Add(new SetupStep
+                {
+                    StepName = "Project Access Setup",
+                    Message = "Invoices project not found - you may need to create it first using the Project RBAC Setup",
+                    Success = false
+                });
+            }
+            else
+            {
+                // Check if user has project access
+                var hasAccess = await scopedUserProjectAccessService.UserHasProjectAccessAsync(user.UserId, invoicesProject.ProjectId);
+                
+                if (!hasAccess)
+                {
+                    try
+                    {
+                        await scopedUserProjectAccessService.GrantProjectAccessAsync(
+                            user.UserId, 
+                            invoicesProject.ProjectId, 
+                            "System Setup", 
+                            "Initial setup for ReadOnly user",
+                            null);
+
+                        setupSteps.Add(new SetupStep
+                        {
+                            StepName = "Project Access Grant",
+                            Message = $"Project access granted to {invoicesProject.ProjectName}",
+                            Success = true
+                        });
+                    }
+                    catch (Exception ex)
+                    {
+                        setupSteps.Add(new SetupStep
+                        {
+                            StepName = "Project Access Grant",
+                            Message = $"Failed to grant project access: {ex.Message}",
+                            Success = false
+                        });
+                    }
+                }
+                else
+                {
+                    setupSteps.Add(new SetupStep
+                    {
+                        StepName = "Project Access Check",
+                        Message = $"User already has access to {invoicesProject.ProjectName}",
+                        Success = true
+                    });
+                }
+            }
+
+            // Check overall success
+            allStepsSuccessful = setupSteps.All(s => s.Success);
+            setupComplete = true;
+
+        }
+        catch (Exception ex)
+        {
+            setupSteps.Add(new SetupStep
+            {
+                StepName = "General Error",
+                Message = $"Unexpected error: {ex.Message}",
+                Success = false
+            });
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task RerunSetup()
+    {
+        await RunUserSetup();
+        StateHasChanged();
+    }
+}
+#endif
