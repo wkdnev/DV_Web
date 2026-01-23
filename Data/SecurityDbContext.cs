@@ -19,7 +19,7 @@ public class SecurityDbContext : DbContext
     public DbSet<ProjectRole> ProjectRoles => Set<ProjectRole>();
     public DbSet<UserProjectRole> UserProjectRoles => Set<UserProjectRole>();
     // REMOVED: public DbSet<ProjectRolePermission> ProjectRolePermissions => Set<ProjectRolePermission>(); - Permissions system removed
-    public DbSet<UserProjectAccess> UserProjectAccess => Set<UserProjectAccess>();
+    // REMOVED: public DbSet<UserProjectAccess> UserProjectAccess => Set<UserProjectAccess>(); - Explicit Access removed
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public DbSet<UserSession> UserSessions => Set<UserSession>();
     public DbSet<SessionActivity> SessionActivities => Set<SessionActivity>();
@@ -105,6 +105,7 @@ public class SecurityDbContext : DbContext
         // Authorization is now based on project roles only, without granular permission assignments
 
         // Configure UserProjectAccess entity
+        /*
         modelBuilder.Entity<UserProjectAccess>(entity =>
         {
             entity.ToTable("UserProjectAccess", "dbo");
@@ -125,6 +126,7 @@ public class SecurityDbContext : DbContext
             entity.HasIndex(e => new { e.ProjectId, e.IsActive })
                 .HasDatabaseName("IX_UserProjectAccess_Project_Active");
         });
+        */
 
         // Configure AuditLog entity
         modelBuilder.Entity<AuditLog>(entity =>

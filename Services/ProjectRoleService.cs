@@ -34,13 +34,11 @@ public class ProjectRoleService
 {
     private readonly SecurityDbContext _securityContext;
     private readonly AppDbContext _appContext;
-    private readonly UserProjectAccessService _userProjectAccessService;
 
-    public ProjectRoleService(SecurityDbContext securityContext, AppDbContext appContext, UserProjectAccessService userProjectAccessService)
+    public ProjectRoleService(SecurityDbContext securityContext, AppDbContext appContext)
     {
         _securityContext = securityContext;
         _appContext = appContext;
-        _userProjectAccessService = userProjectAccessService;
     }
 
     // ========================================================================
@@ -161,8 +159,8 @@ public class ProjectRoleService
             throw new InvalidOperationException("Project role not found");
         }
 
-        // Validate that user has access to the project before assigning role
-        await _userProjectAccessService.ValidateUserProjectAccessAsync(userId, projectRole.ProjectId);
+        // Validation for user project access removed - strictly AD checks now.
+        // Was: await _userProjectAccessService.ValidateUserProjectAccessAsync(userId, projectRole.ProjectId);
 
         // Check if assignment already exists
         var existing = await _securityContext.UserProjectRoles

@@ -44,7 +44,6 @@ public class RoleContextService
     private readonly IServiceProvider _serviceProvider;
     private readonly ILogger<RoleContextService> _logger;
     private readonly UserService _userService;
-    private readonly FirstUserAdminService _firstUserAdminService;
     private readonly ProjectRoleService _projectRoleService;
     private readonly SecurityDbContext _securityContext;
     private readonly SemaphoreSlim _initLock = new(1, 1);
@@ -60,7 +59,6 @@ public class RoleContextService
         IServiceProvider serviceProvider, 
         ILogger<RoleContextService> logger,
         UserService userService,
-        FirstUserAdminService firstUserAdminService,
         ProjectRoleService projectRoleService,
         SecurityDbContext securityContext)
     {
@@ -68,7 +66,6 @@ public class RoleContextService
         _serviceProvider = serviceProvider;
         _logger = logger;
         _userService = userService;
-        _firstUserAdminService = firstUserAdminService;
         _projectRoleService = projectRoleService;
         _securityContext = securityContext;
     }
@@ -159,19 +156,14 @@ public class RoleContextService
             var displayName = _currentUsername.Contains('\\') ? _currentUsername.Split('\\')[1] : _currentUsername;
             var email = $"{displayName}@example.com";
             
-            // Check if this is the first user and promote to admin if needed
-            var wasFirstUser = await _firstUserAdminService.EnsureFirstUserIsAdminAsync(_currentUsername, displayName, email);
-            if (wasFirstUser)
-            {
-                _logger.LogWarning($"RoleContextService: First user detected - {_currentUsername} promoted to Global Administrator");
-            }
+            // Note: FirstUserAdmin (Global Admin promotion) logic removed. Global Admin role is not valid in DV_Web.
             
             var user = await _userService.EnsureUserExistsAsync(_currentUsername, displayName, email);
             var userId = user.UserId;
             _logger.LogInformation($"RoleContextService: User found/created with ID: {userId}");
 
-            // Step 1: Check if user is a global admin
-            var isGlobalAdmin = await _userService.IsGlobalAdminAsync(userId);
+            // Step 1: Access Check
+            // We proceed directly to fetch project-specific roles. Global Admin overrides are removed.
             
             // Step 2: Get project-specific roles - data is already materialized with AsNoTracking
             var userProjectAccess = await _projectRoleService.GetUserProjectAccessAsync(userId);
@@ -215,18 +207,7 @@ public class RoleContextService
             // Now build the roles list from the materialized data (no DB access)
             _userRoles.Clear();
             
-            // Add Admin role if user is global admin
-            if (isGlobalAdmin)
-            {
-                var adminRole = new ApplicationRole
-                {
-                    RoleId = 1,
-                    Name = "Admin",
-                    Description = "Global System Administrator"
-                };
-                _userRoles.Add(adminRole);
-                _logger.LogInformation($"RoleContextService: User is global admin, added Admin role");
-            }
+            // Note: Global Admin logic removed. Admin roles are now strictly derived from project permissions.
             
             // Add project-specific roles from materialized data
             var existingRoleNames = new HashSet<string>(_userRoles.Select(r => r.Name), StringComparer.OrdinalIgnoreCase);
@@ -234,10 +215,6 @@ public class RoleContextService
             {
                 var roleName = ExtractRoleTypeFromDisplayName(roleDisplayName);
                 
-                // Skip Admin role since global admin already added it
-                if (roleName.Equals("Admin", StringComparison.OrdinalIgnoreCase))
-                    continue;
-
                 // Only add if we haven't already added this role name
                 if (!existingRoleNames.Contains(roleName))
                 {

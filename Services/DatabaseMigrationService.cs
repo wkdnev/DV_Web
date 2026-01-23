@@ -46,7 +46,7 @@ public class DatabaseMigrationService
     // Purpose: Checks if the Project table exists at all.
     public async Task<bool> CheckIfProjectTableExistsAsync()
     {
-        var query = "SELECT COUNT(*) AS TableCount FROM sys.tables WHERE name = 'Project' AND schema_id = SCHEMA_ID('dbo')";
+        var query = "SELECT COUNT(*) AS Value FROM sys.tables WHERE name = 'Project' AND schema_id = SCHEMA_ID('dbo')";
         var count = await _context.Database.SqlQueryRaw<int>(query).FirstOrDefaultAsync();
         return count > 0;
     }
@@ -66,13 +66,13 @@ public class DatabaseMigrationService
 
         // If table exists, check if it has the new schema columns
         var query = @"
-            SELECT COUNT(*) AS ColumnCount
+            SELECT COUNT(*) AS Value
             FROM sys.columns 
             WHERE object_id = OBJECT_ID('dbo.Project') 
-            AND name IN ('SchemaName', 'Description', 'CreatedDate', 'IsActive')";
+            AND name IN ('SchemaName', 'Description', 'CreatedDate', 'IsActive', 'ReadPrincipal', 'EditPrincipal')";
         
         var count = await _context.Database.SqlQueryRaw<int>(query).FirstOrDefaultAsync();
-        return count < 4; // Migration needed if not all 4 columns exist
+        return count < 6; // Migration needed if not all 6 columns exist
     }
 
     // ========================================================================
@@ -90,7 +90,8 @@ public class DatabaseMigrationService
                     [ProjectCode] nvarchar(50) NOT NULL,
                     [ProjectName] nvarchar(255) NOT NULL,
                     [FolderPath] nvarchar(500) NULL,
-                    [Principal] nvarchar(255) NULL,
+                    [ReadPrincipal] nvarchar(255) NULL,
+                    [EditPrincipal] nvarchar(255) NULL,
                     [SchemaName] nvarchar(128) NOT NULL,
                     [Description] nvarchar(1000) NULL,
                     [CreatedDate] datetime2 NOT NULL DEFAULT GETUTCDATE(),
@@ -121,8 +122,8 @@ public class DatabaseMigrationService
         }
         else
         {
-            // Add missing columns to existing table
-            var migrationScript = @"
+            // 1. Add missing columns (Execute separately to ensure they exist for subsequent updates)
+            var addColumnsScript = @"
                 -- Add new columns to the existing Project table
                 IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('dbo.Project') AND name = 'SchemaName')
                 BEGIN
@@ -144,15 +145,47 @@ public class DatabaseMigrationService
                     ALTER TABLE dbo.Project ADD IsActive bit NOT NULL DEFAULT 1;
                 END
 
+                -- NEW: Add ReadPrincipal and EditPrincipal columns
+                IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('dbo.Project') AND name = 'ReadPrincipal')
+                BEGIN
+                    ALTER TABLE dbo.Project ADD ReadPrincipal nvarchar(255) NULL;
+                END
+
+                IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('dbo.Project') AND name = 'EditPrincipal')
+                BEGIN
+                    ALTER TABLE dbo.Project ADD EditPrincipal nvarchar(255) NULL;
+                END";
+
+            await _context.Database.ExecuteSqlRawAsync(addColumnsScript);
+
+            // 2. Data Migration (Now the columns definitely exist)
+            var dataMigrationScript = @"
                 -- Update existing records to have schema names based on project codes
                 UPDATE dbo.Project 
                 SET SchemaName = LOWER(REPLACE(REPLACE(REPLACE(ProjectCode, ' ', '_'), '-', '_'), '.', '_'))
                 WHERE SchemaName IS NULL;
 
+                -- Migrate data from old Principal column to new columns if it exists
+                IF EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('dbo.Project') AND name = 'Principal')
+                BEGIN
+                    -- Use Dynamic SQL to avoid compilation errors if columns were just added
+                    EXEC sp_executesql N'UPDATE dbo.Project SET ReadPrincipal = Principal, EditPrincipal = Principal WHERE ReadPrincipal IS NULL AND Principal IS NOT NULL';
+                END";
+
+            await _context.Database.ExecuteSqlRawAsync(dataMigrationScript);
+            
+            // 3. Cleanup and Constraints
+            var cleanupScript = @"
                 -- Make SchemaName column NOT NULL after setting values
                 IF EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('dbo.Project') AND name = 'SchemaName' AND is_nullable = 1)
                 BEGIN
                     ALTER TABLE dbo.Project ALTER COLUMN SchemaName nvarchar(128) NOT NULL;
+                END
+                
+                -- Drop the old Principal column if it exists
+                IF EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('dbo.Project') AND name = 'Principal')
+                BEGIN
+                    ALTER TABLE dbo.Project DROP COLUMN Principal;
                 END
 
                 -- Add unique constraints if they don't exist
@@ -166,7 +199,7 @@ public class DatabaseMigrationService
                     CREATE UNIQUE INDEX IX_Project_SchemaName ON dbo.Project (SchemaName);
                 END";
 
-            await _context.Database.ExecuteSqlRawAsync(migrationScript);
+            await _context.Database.ExecuteSqlRawAsync(cleanupScript);
         }
     }
 
@@ -182,7 +215,7 @@ public class DatabaseMigrationService
             return 0;
         }
         
-        var query = "SELECT COUNT(*) AS ProjectCount FROM dbo.Project";
+        var query = "SELECT COUNT(*) AS Value FROM dbo.Project";
         return await _context.Database.SqlQueryRaw<int>(query).FirstOrDefaultAsync();
     }
 
@@ -196,11 +229,11 @@ public class DatabaseMigrationService
             -- Insert sample projects if none exist
             IF NOT EXISTS (SELECT * FROM dbo.Project)
             BEGIN
-                INSERT INTO dbo.Project (ProjectCode, ProjectName, FolderPath, Principal, SchemaName, Description, CreatedDate, IsActive)
+                INSERT INTO dbo.Project (ProjectCode, ProjectName, FolderPath, ReadPrincipal, EditPrincipal, SchemaName, Description, CreatedDate, IsActive)
                 VALUES 
-                    ('INV001', 'Invoices', '/documents/invoices', 'Finance Department', 'invoices', 'Invoice documents and related correspondence', GETUTCDATE(), 1),
-                    ('CORR001', 'Correspondence', '/documents/correspondence', 'Admin Department', 'correspondence', 'General correspondence and letters', GETUTCDATE(), 1),
-                    ('BILL001', 'Bills and Receipts', '/documents/bills', 'Accounting Department', 'bills', 'Bills, receipts and payment documentation', GETUTCDATE(), 1);
+                    ('INV001', 'Invoices', '/documents/invoices', 'DocViewer_Schema_Invoices_Read', 'DocViewer_Schema_Invoices_Edit', 'invoices', 'Invoice documents and related correspondence', GETUTCDATE(), 1),
+                    ('CORR001', 'Correspondence', '/documents/correspondence', 'DocViewer_Schema_Correspondence_Read', 'DocViewer_Schema_Correspondence_Edit', 'correspondence', 'General correspondence and letters', GETUTCDATE(), 1),
+                    ('BILL001', 'Bills and Receipts', '/documents/bills', 'DocViewer_Schema_Bills_Read', 'DocViewer_Schema_Bills_Edit', 'bills', 'Bills, receipts and payment documentation', GETUTCDATE(), 1);
             END";
 
         await _context.Database.ExecuteSqlRawAsync(sampleProjects);

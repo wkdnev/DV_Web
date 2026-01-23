@@ -1,34 +1,44 @@
 ﻿@using DV.Web.Components.Layout
 @using DV.Web.Components.Documents
 @using DV.Web.Services
+@using DV.Web.Security
+@inject PersistentComponentState ApplicationState
+@inject TokenProvider TokenProvider
 @inherits LayoutComponentBase
 
 <div class="page">
-
-   <!-- <div class="sidebar">
-        <NavMenu />
-    </div> -->
-
-    <main>
-        <div class="top-row px-4 d-flex align-items-center justify-content-end">
-            <div class="d-flex align-items-center gap-3">
-                <a href="/select-role" class="btn btn-outline-primary btn-sm">
-                    <i class="bi bi-person-badge me-1"></i>
-                    Select Role
-                </a>
-                <div class="navbar-nav">
-                    <RoleSelector />
-                    <SessionStatus ShowForAdmins="true" />
-                </div>
-                @* Bad File button for ReadOnly role *@
-                <BadFileButton />
-                <a href="https://learn.microsoft.com/aspnet/core/" target="_blank" class="btn btn-outline-secondary btn-sm">
-                    <i class="bi bi-info-circle me-1"></i>
-                    About
-                </a>
+    <!-- New Header System -->
+    <header class="app-header">
+        <!-- Left Section (30%): Logo and Version -->
+        <div class="header-branding">
+            <div class="d-flex align-items-center gap-2">
+                <img src="favicon.png" alt="Logo" height="32" />
+                <span class="h4 mb-0 text-white">DocViewer</span>
             </div>
+            <div class="text-white-50">v1.0.0</div>
         </div>
 
+        <!-- Right Section (70%): Menu Bar -->
+        <div class="header-menu">
+            <nav class="d-flex w-100 align-items-center justify-content-between px-3">
+                <!-- Left-aligned Menu Items -->
+                <div class="d-flex align-items-center gap-3">
+                    <a href="" class="menu-link">Browse</a>
+                    <a href="manage" class="menu-link">Manage</a>
+                    <div class="d-flex align-items-center">
+                        <BadFileButton />
+                    </div>
+                </div>
+
+                <!-- Right-aligned Menu Items -->
+                <div class="d-flex align-items-center">
+                    <a href="about" class="menu-link">About</a>
+                </div>
+            </nav>
+        </div>
+    </header>
+
+    <main>
         <article class="content px-4">
             @Body
         </article>
@@ -40,3 +50,13 @@
     <a href="" class="reload">Reload</a>
     <a class="dismiss">🗙</a>
 </div>
+
+@code {
+    protected override void OnInitialized()
+    {
+        if (ApplicationState.TryTakeFromJson<string>("AccessToken", out var savedToken))
+        {
+            TokenProvider.AccessToken = savedToken;
+        }
+    }
+}

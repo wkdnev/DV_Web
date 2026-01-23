@@ -24,6 +24,8 @@ using Microsoft.Extensions.Logging;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Options;
 
+using DV.Shared.Constants;
+
 var builder = WebApplication.CreateBuilder(args);
 
 // ============================================================================
@@ -233,12 +235,14 @@ builder.Services.AddScoped<DocumentUploadService>();
 builder.Services.AddScoped<SchemaBlobMigrationService>();
 builder.Services.AddTransient<RoleContextService>();  // Transient to avoid DbContext sharing across concurrent component initialization
 builder.Services.AddTransient<ProjectRoleService>();  // Transient to avoid DbContext sharing
-builder.Services.AddTransient<UserProjectAccessService>();  // Transient to avoid DbContext sharing
+
+
+// Removed UserProjectAccessService as part of Explicit Access removal
+// builder.Services.AddTransient<UserProjectAccessService>();
 builder.Services.AddScoped<AuditService>();
+builder.Services.AddScoped<ProjectSelectionState>();
 builder.Services.AddScoped<SessionManagementService>();
-builder.Services.AddScoped<GlobalAdminMigrationService>();
 builder.Services.AddScoped<ProjectRoleSeeder>();
-builder.Services.AddTransient<FirstUserAdminService>(); // Transient to avoid DbContext sharing during concurrent initialization
 
 // ============================================================================
 // Health Checks Configuration
@@ -267,6 +271,7 @@ builder.Services.AddScoped<ApplicationHealthCheck>();
 // ============================================================================
 // API Client Configuration
 // ============================================================================
+builder.Services.AddScoped<DV.Web.Security.TokenProvider>();
 builder.Services.AddScoped<DV.Web.Security.TokenDelegatingHandler>();
 
 builder.Services.AddHttpClient("Api", client =>
@@ -342,7 +347,7 @@ builder.Services.AddAuthentication(options =>
             Console.WriteLine($"OIDC Auth Failed: {context.Exception?.Message}");
             return Task.CompletedTask;
         },
-        OnTokenValidated = context =>
+        OnTokenValidated = async context =>
         {
             var principal = context.Principal;
             Console.WriteLine($"=== OIDC Token Validated ===");
@@ -358,8 +363,30 @@ builder.Services.AddAuthentication(options =>
                     Console.WriteLine($"  {claim.Type} = {claim.Value}");
                 }
             }
+
+            // Sync Global Admin Status
+            if (principal?.Identity?.Name != null)
+            {
+                try
+                {
+                    // Create a scope to resolve scoped services
+                    // context.HttpContext.RequestServices is already scoped to the request
+                    var userService = context.HttpContext.RequestServices.GetRequiredService<UserService>();
+                    var username = principal.Identity.Name;
+                    
+                    var isGlobalAdmin = principal.IsInRole("GlobalAdmin") || 
+                                        principal.IsInRole(Roles.GlobalAdminGroup) ||
+                                        principal.HasClaim(c => c.Type == "groups" && c.Value == Roles.GlobalAdminGroup);
+
+                    await userService.SyncGlobalAdminStatusAsync(username, isGlobalAdmin);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Error syncing global admin status: {ex.Message}");
+                }
+            }
             
-            return Task.CompletedTask;
+            // return Task.CompletedTask; // Not needed if async
         }
     };
 });
@@ -376,16 +403,11 @@ builder.Services.AddAuthorization(options =>
     options.AddPolicy("RequireAdminRole", policy =>
         policy.RequireRole("Admin"));
 
-    // Add the GlobalAdminOnly policy
-    options.AddPolicy("GlobalAdminOnly", policy =>
-        policy.AddRequirements(new GlobalAdminRequirement()));
-    
     // Note: RoleBasedAccess policies are now created dynamically by RoleBasedAuthorizationPolicyProvider
 });
 
 // Register authorization handlers
 builder.Services.AddScoped<IAuthorizationHandler, RoleBasedAuthorizationHandler>();
-builder.Services.AddScoped<IAuthorizationHandler, GlobalAdminAuthorizationHandler>();
 
 // ============================================================================
 // Session & Background Services
@@ -496,6 +518,35 @@ app.MapHealthChecks("/health/live", new Microsoft.AspNetCore.Diagnostics.HealthC
 {
     Predicate = _ => false // Only basic liveness check
 });
+
+// ============================================================================
+// Database Migration
+// ============================================================================
+try
+{
+    using (var scope = app.Services.CreateScope())
+    {
+        var migrationService = scope.ServiceProvider.GetRequiredService<DatabaseMigrationService>();
+        var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+        
+        logger.LogInformation("Checking for database migrations...");
+        if (await migrationService.CheckIfMigrationNeededAsync())
+        {
+            logger.LogInformation("Migration needed. executing migration...");
+            await migrationService.ExecuteProjectSchemaMigrationAsync();
+            logger.LogInformation("Migration completed successfully.");
+        }
+        else
+        {
+            logger.LogInformation("Database is up to date.");
+        }
+    }
+}
+catch (Exception ex)
+{
+    var logger = app.Services.GetRequiredService<ILogger<Program>>();
+    logger.LogCritical(ex, "An error occurred while migrating the database.");
+}
 
 // ============================================================================
 // Application Startup

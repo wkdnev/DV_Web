@@ -45,12 +45,20 @@ public class SessionManagementService
             var ipAddress = GetClientIpAddress(httpContext);
             var userAgent = httpContext.Request.Headers["User-Agent"].FirstOrDefault();
 
-            // Check if session already exists
+            // Check if session already exists (active or inactive)
             var existingSession = await _securityContext.UserSessions
-                .FirstOrDefaultAsync(s => s.SessionKey == sessionKey && s.IsActive);
+                .OrderByDescending(s => s.CreatedAt)
+                .FirstOrDefaultAsync(s => s.SessionKey == sessionKey);
 
             if (existingSession != null)
             {
+                if (!existingSession.IsActive)
+                {
+                    // Session was previously terminated - do not resurrect
+                    _logger.LogWarning("Attempted to initialize terminated session {SessionKey} for user {Username}", sessionKey, username);
+                    return existingSession; // Return the inactive session
+                }
+
                 // Update existing session
                 existingSession.LastActivity = DateTime.UtcNow;
                 existingSession.CurrentRole = currentRole;
@@ -243,6 +251,46 @@ public class SessionManagementService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error updating session role by username for {Username}", username);
+        }
+    }
+
+    /// <summary>
+    /// Check if the current user session is valid
+    /// </summary>
+    public async Task<bool> IsUserSessionValidAsync(string sessionKey)
+    {
+        try
+        {
+            // Check if session exists and is active
+            var session = await _securityContext.UserSessions
+                .AsNoTracking()
+                .FirstOrDefaultAsync(s => s.SessionKey == sessionKey);
+
+            if (session == null)
+            {
+                // Session not found in DB
+                return false;
+            }
+
+            if (!session.IsActive)
+            {
+                // Session marked as inactive (revoked)
+                return false;
+            }
+            
+            // Check expiration
+            if (session.ExpiresAt < DateTime.UtcNow)
+            {
+                 return false;
+            }
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error checking session validity for key: {SessionKey}", sessionKey);
+            // Default to false if we can't verify
+            return false;
         }
     }
 

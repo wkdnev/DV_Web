@@ -26,9 +26,9 @@
 @inject DocumentRepository Repo
 @inject AuthenticationStateProvider AuthenticationStateProvider
 @inject UserService UserService
-@inject UserProjectAccessService UserProjectAccessService
 @inject AuditService AuditService
 @inject IServiceProvider ServiceProvider
+@inject ProjectSelectionState ProjectSelectionState
 @attribute [Authorize]
 @rendermode InteractiveServer
 
@@ -41,27 +41,29 @@
         @* Main container for the dashboard layout *@
 
         @* ========================================================================
-           Top Left: Project Selection Panel
+           Left Column (30%): Project Selection & Search Criteria
            ========================================================================
-           Purpose: Allows the user to select a database (project) from a dropdown.
+           Merged panel for database selection and search input.
         *@
-        <div class="dashboard-panel">
+        <div class="dashboard-panel left-panel">
             <div class="card h-100">
                 <div class="card-header bg-secondary text-white">
-                    <strong>Select Database</strong>
+                    <strong>Search Parameters</strong>
                 </div>
                 <div class="card-body">
+                    @* Project Selection Section *@
+                    <h6 class="card-subtitle mb-2 text-muted">Select Database</h6>
                     @if (projects == null || projects.Count == 0)
                     {
-                        <div class="alert alert-warning">
+                        <div class="alert alert-warning mb-3">
                             <i class="bi bi-exclamation-triangle me-2"></i>
                             <strong>No Project Access</strong>
-                            <p class="mb-0">You don't have access to any projects. Please contact your system administrator to request access.</p>
+                            <p class="mb-0 small">You don't have access to any projects.</p>
                         </div>
                     }
                     else
                     {
-                        <select class="form-select" @bind="selectedProjectId" @bind:after="ProjectSelectionChanged">
+                        <select class="form-select mb-3" @bind="selectedProjectId" @bind:after="ProjectSelectionChanged">
                             <option value="">-- Select Project --</option>
                             @foreach (var p in projects)
                             {
@@ -69,115 +71,41 @@
                             }
                         </select>
                     }
-                </div>
-            </div>
-        </div>
 
-        @* ========================================================================
-           Top Right: Search Results Panel
-           ========================================================================
-           Purpose: Displays the results of a document search in a table format.
-        *@
-        <div class="dashboard-panel">
-            <div class="card h-100">
-                <div class="card-header bg-secondary text-white">
-                    <strong>Search Results</strong>
-                </div>
-                <div class="card-body p-0 panel-scroll">
-                    @if (isLoading)
-                    {
-                        <div class="d-flex justify-content-center my-3">
-                            <div class="spinner-border text-primary" role="status">
-                                <span class="visually-hidden">Loading...</span>
-                            </div>
-                        </div>
-                    }
-                    else if (errorMessage != null)
-                    {
-                        <div class="alert alert-danger m-3">@errorMessage</div>
-                    }
-                    else if (results is null)
-                    {
-                        <div class="p-3 text-secondary">Try a search to see documents.</div>
-                    }
-                    else if (results.Count == 0)
-                    {
-                        <div class="p-3">No results.</div>
-                    }
-                    else
-                    {
-                        <table class="table table-sm table-striped mb-0">
-                            <thead>
-                                <tr>
-                                    <th>Document Number</th>
-                                    <th>Title</th>
-                                    <th>Author</th>
-                                    <th>Type</th>
-                                    <th>Status</th>
-                                    <th>Created</th>
-                                    <th>Action</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                @foreach (var d in results)
-                                {
-                                    <tr>
-                                        <td>@d.DocumentNumber</td>
-                                        <td>@d.Title</td>
-                                        <td>@d.Author</td>
-                                        <td>@d.DocumentType</td>
-                                        <td>@d.Status</td>
-                                        <td>@d.CreatedOn.ToString("yyyy-MM-dd")</td>
-                                        <td>
-                                            <button class="btn btn-sm btn-outline-primary"
-                                                    @onclick="() => ShowDetails(d.DocumentId)">
-                                                View Details
-                                            </button>
-                                        </td>
-                                    </tr>
-                                }
-                            </tbody>
-                        </table>
-                    }
-                </div>
-            </div>
-        </div>
+                    <hr class="my-3" />
 
-        @* ========================================================================
-           Bottom Left: Search Criteria Panel
-           ========================================================================
-           Purpose: Allows the user to input search criteria and perform a search.
-        *@
-        <div class="dashboard-panel">
-            <div class="card h-100">
-                <div class="card-header bg-secondary text-white">
-                    <strong>Search Criteria</strong>
-                </div>
-                <div class="card-body panel-scroll">
+                    @* Search Criteria Section *@
+                    <h6 class="card-subtitle mb-2 text-muted">Search Criteria</h6>
                     @if (projects == null || projects.Count == 0)
                     {
                         <div class="alert alert-info">
                             <i class="bi bi-info-circle me-2"></i>
-                            <strong>No Projects Available</strong>
-                            <p class="mb-0">You need project access to search documents.</p>
+                            <span class="small">Projects needed for search.</span>
                         </div>
                     }
                     else
                     {
-                        <input class="form-control mb-2" @bind="term" placeholder="Title, Author, or Document Number" />
+                        <div class="mb-3">
+                            <label class="form-label small text-muted">Keywords</label>
+                            <input class="form-control" @bind="term" placeholder="Title, Author, or Doc Number" />
+                        </div>
+                        
                         <button class="btn btn-primary w-100 mb-2" @onclick="Search" disabled="@(!selectedProjectId.HasValue)">
                             @if (selectedProjectId.HasValue)
                             {
-                                <span>Search</span>
+                                <i class="bi bi-search me-2"></i><span>Search</span>
                             }
                             else
                             {
                                 <span>Select Project First</span>
                             }
                         </button>
+                        
                         @if (!selectedProjectId.HasValue && projects.Count > 0)
                         {
-                            <small class="text-muted">Please select a project to enable searching.</small>
+                            <div class="text-center">
+                                <small class="text-muted">Please select a project to enable searching.</small>
+                            </div>
                         }
                     }
                 </div>
@@ -185,25 +113,101 @@
         </div>
 
         @* ========================================================================
-           Bottom Right: Document Details Panel
+           Right Column (70%): Results & Details
            ========================================================================
-           Purpose: Displays metadata for the selected document and a "View Document" button.
+           Top: Search Results Table
+           Bottom: Document Viewer/Details
         *@
-        <div class="dashboard-panel">
-            <div class="card h-100">
-                <div class="card-header bg-secondary text-white">
-                    <strong>Document Details</strong>
+        
+        <div class="right-column d-flex flex-column gap-3 h-100">
+            @* Top Right: Search Results Panel *@
+            <div class="dashboard-panel flex-grow-1" style="flex-basis: 50%;">
+                <div class="card h-100">
+                    <div class="card-header bg-secondary text-white">
+                        <strong>Search Results</strong>
+                    </div>
+                    <div class="card-body p-0 panel-scroll">
+                        @if (isLoading)
+                        {
+                            <div class="d-flex justify-content-center my-3">
+                                <div class="spinner-border text-primary" role="status">
+                                    <span class="visually-hidden">Loading...</span>
+                                </div>
+                            </div>
+                        }
+                        else if (errorMessage != null)
+                        {
+                            <div class="alert alert-danger m-3">@errorMessage</div>
+                        }
+                        else if (results is null)
+                        {
+                            <div class="p-3 text-secondary">Try a search to see documents.</div>
+                        }
+                        else if (results.Count == 0)
+                        {
+                            <div class="p-3">No results.</div>
+                        }
+                        else
+                        {
+                            <table class="table table-sm table-striped mb-0 sticky-header">
+                                <thead>
+                                    <tr>
+                                        <th>Document Number</th>
+                                        <th>Title</th>
+                                        <th>Author</th>
+                                        <th>Type</th>
+                                        <th>Status</th>
+                                        <th>Created</th>
+                                        <th>Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var d in results)
+                                    {
+                                        <tr>
+                                            <td>@d.DocumentNumber</td>
+                                            <td>@d.Title</td>
+                                            <td>@d.Author</td>
+                                            <td>@d.DocumentType</td>
+                                            <td>@d.Status</td>
+                                            <td>@d.CreatedOn.ToString("yyyy-MM-dd")</td>
+                                            <td>
+                                                <button class="btn btn-sm btn-outline-primary"
+                                                        @onclick="() => ShowDetails(d.DocumentId)">
+                                                    Details
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        }
+                    </div>
                 </div>
-                <div class="card-body p-0 panel-scroll">
-                    @if (selectedDocumentId is not null)
-                    {
-                        <iframe src="@($"/viewdoc/DefaultConnection/{selectedDocumentId}")"
-                                style="width:100%;height:100%;border:none;"></iframe>
-                    }
-                    else
-                    {
-                        <div class="p-3 text-secondary">Select a document to view details.</div>
-                    }
+            </div>
+
+            @* Bottom Right: Document Details/Viewer *@
+            <div class="dashboard-panel flex-grow-1" style="flex-basis: 50%;">
+                <div class="card h-100">
+                    <div class="card-header bg-secondary text-white">
+                        <strong>Document Details</strong>
+                    </div>
+                    <div class="card-body p-0 panel-scroll">
+                        @if (selectedDocumentId is not null)
+                        {
+                            <iframe src="@(string.IsNullOrEmpty(viewDocumentSchemaName) ? $"/viewdoc/{selectedDocumentId}" : $"/viewdoc/{viewDocumentSchemaName}/{selectedDocumentId}")"
+                                    style="width:100%;height:100%;border:none;"></iframe>
+                        }
+                        else
+                        {
+                            <div class="d-flex align-items-center justify-content-center h-100 text-muted">
+                                <div class="text-center">
+                                    <i class="bi bi-file-earmark-text display-4 opacity-25"></i>
+                                    <p class="mt-2">Select a document to view details.</p>
+                                </div>
+                            </div>
+                        }
+                    </div>
                 </div>
             </div>
         </div>
@@ -217,7 +221,7 @@
 <style>
     .document-search-container {
         width: 100%;
-        height: calc(100vh - 120px); /* Full viewport height minus top navigation */
+        height: 100%; /* Fill available space in content area */
         padding: 0;
         margin: 0;
         overflow: hidden;
@@ -225,8 +229,8 @@
 
     .dashboard-grid {
         display: grid;
-        grid-template-columns: 25% 75%; /* Left panels: 25%, Right panels: 75% */
-        grid-template-rows: 1fr 1fr;
+        grid-template-columns: 30% 70%; /* Left: 30%, Right: 70% */
+        grid-template-rows: 1fr; /* Single row, internal split for right column */
         gap: 12px;
         height: 100%;
         width: 100%;
@@ -236,11 +240,14 @@
     }
 
     .dashboard-panel {
-        height: 100%;
         min-width: 0;
         min-height: 0;
         display: flex;
         flex-direction: column;
+    }
+    
+    .left-panel {
+        height: 100%;
     }
 
     .card.h-100 {
@@ -260,8 +267,9 @@
 
     .card-header {
         flex-shrink: 0;
-        padding: 12px 16px;
+        padding: 10px 16px;
         font-weight: 600;
+        font-size: 0.95rem;
     }
 
     .card-body {
@@ -279,7 +287,15 @@
     /* Ensure the table takes full height in search results */
     .table {
         margin: 0;
-        font-size: 0.9rem;
+        font-size: 0.85rem;
+    }
+    
+    .sticky-header th {
+        position: sticky;
+        top: 0;
+        background-color: #fff;
+        z-index: 10;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.1);
     }
 </style>
 
@@ -293,10 +309,9 @@
     bool isLoading = false;
     string? errorMessage;
 
-    // Add user information properties
+    // User information
     private string? currentUsername;
-    private bool userHasEditPermission = false;
-    private ApplicationUser? currentUser;
+    private ApplicationUser? currentUser; 
 
     protected override async Task OnInitializedAsync()
     {
@@ -309,70 +324,37 @@
             var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
             currentUsername = authState.User.Identity?.Name;
 
-            // TEST: Try to log a simple audit event to see if audit logging is working
-            try
-            {
-                await AuditService.LogEventAsync(new AuditLog
-                {
-                    EventType = AuditEventTypes.SecurityEvent,
-                    Action = "PageLoad",
-                    Username = currentUsername ?? "Unknown",
-                    Result = AuditResults.Success,
-                    Details = "DocumentSearch page loaded"
-                });
-                Console.WriteLine("DocumentSearch: Test audit log attempted");
-            }
-            catch (Exception auditEx)
-            {
-                Console.WriteLine($"DocumentSearch: Test audit log FAILED: {auditEx.Message}");
-            }
-
-            // Initialize or update session
-            try
-            {
-                var sessionService = ServiceProvider.GetRequiredService<SessionManagementService>();
-                await sessionService.InitializeSessionAsync(currentUsername ?? "Unknown", null);
-                Console.WriteLine("DocumentSearch: Session initialized/updated");
-            }
-            catch (Exception sessionEx)
-            {
-                Console.WriteLine($"DocumentSearch: Session initialization FAILED: {sessionEx.Message}");
-            }
-
             if (!string.IsNullOrEmpty(currentUsername))
             {
-                // Get the user from the database
+                // Fetch the ApplicationUser object from DB primarily for UserId access (needed for Auditing)
+                // Note: Authorization logic does NOT depend on this DB user object anymore.
                 currentUser = await UserService.GetUserByUsernameAsync(currentUsername);
-                
-                if (currentUser != null)
-                {
-                    // Check if user is a global admin
-                    var isGlobalAdmin = await UserService.IsGlobalAdminAsync(currentUser.UserId);
 
-                    if (isGlobalAdmin)
-                    {
-                        // Global admins can access all projects
-                        projects = (await Repo.GetProjectsAsync("DefaultConnection")).ToList();
-                        Console.WriteLine($"DocumentSearch: Global admin user, loaded {projects.Count} projects");
-                    }
-                    else
-                    {
-                        // Regular users can only access projects they have ReadOnly access to
-                        projects = await GetProjectsWithReadOnlyAccessAsync(currentUser.UserId);
-                        Console.WriteLine($"DocumentSearch: Regular user, loaded {projects.Count} projects with ReadOnly access");
-                        
-                        // Special debugging for AIPC\neilr
-                        if (currentUsername.Equals("AIPC\\neilr", StringComparison.OrdinalIgnoreCase))
-                        {
-                            Console.WriteLine($"DocumentSearch: ?? AIPC\\neilr DEBUG - Final projects: {string.Join(", ", projects.Select(p => p.ProjectName))}");
-                            Console.WriteLine($"DocumentSearch: Expected: Should NOT include HR project");
-                        }
-                    }
-                }
-                else
+                // Initialize session
+                 try
                 {
-                    errorMessage = "User not found in database.";
-                    projects = new List<Project>();
+                    var sessionService = ServiceProvider.GetRequiredService<SessionManagementService>();
+                    await sessionService.InitializeSessionAsync(currentUsername, null);
+                }
+                catch (Exception sessionEx)
+                {
+                    Console.WriteLine($"DocumentSearch: Session initialization FAILED: {sessionEx.Message}");
+                }
+
+                // ==============================================================================
+                // UPDATED AUTHORIZATION: AD Group Based Access
+                // ==============================================================================
+                // 1. DV_Web authorization relies strictly on AD Group association.
+                // 2. We use Repo.GetProjectsForUserAsync(ClaimsPrincipal) to filter projects
+                //    by matching Claims against Project.Principal.
+                // ==============================================================================
+                
+                projects = (await Repo.GetProjectsForUserAsync(authState.User)).ToList();
+                Console.WriteLine($"DocumentSearch: Loaded {projects.Count} projects for {currentUsername} via AD Group Association.");
+                
+                if (projects.Count == 0)
+                {
+                     Console.WriteLine($"DocumentSearch: WARNING: User {currentUsername} has 0 projects. Check 'ReadPrincipal'/'EditPrincipal' fields in Projects table vs User Claims.");
                 }
             }
             else
@@ -393,149 +375,6 @@
         }
     }
 
-    /// <summary>
-    /// Gets projects where the user has both project access AND ReadOnly permission
-    /// This ensures only users with proper search permissions can see projects in the dropdown
-    /// </summary>
-    private async Task<List<Project>> GetProjectsWithReadOnlyAccessAsync(int userId)
-    {
-        try
-        {
-            var accessibleProjects = new List<Project>();
-            
-            // Step 1: Get all projects the user has project access to
-            var projectsWithAccess = await UserProjectAccessService.GetUserAccessibleProjectsAsync(userId);
-            Console.WriteLine($"DocumentSearch: User has project access to {projectsWithAccess.Count} projects");
-            foreach (var p in projectsWithAccess)
-            {
-                Console.WriteLine($"DocumentSearch: - Project access: '{p.ProjectName}' (ID: {p.ProjectId})");
-            }
-            
-            // Step 2: Check if user has global ReadOnly role
-            var userGlobalRoles = await UserService.GetUserRolesAsync(userId);
-            var hasGlobalReadOnly = userGlobalRoles.Any(r => r.Name.Equals("ReadOnly", StringComparison.OrdinalIgnoreCase));
-            
-            Console.WriteLine($"DocumentSearch: User has global ReadOnly role: {hasGlobalReadOnly}");
-            Console.WriteLine($"DocumentSearch: User global roles: {string.Join(", ", userGlobalRoles.Select(r => r.Name))}");
-            
-            // STRICTER APPROACH: Check each project individually regardless of global ReadOnly
-            Console.WriteLine($"DocumentSearch: Using STRICT project-by-project validation...");
-            
-            foreach (var project in projectsWithAccess)
-            {
-                // For each project, determine if user should have search access
-                var shouldHaveAccess = await ValidateProjectSearchAccess(userId, project.ProjectId, hasGlobalReadOnly);
-                Console.WriteLine($"DocumentSearch: Project '{project.ProjectName}' - Final decision: {(shouldHaveAccess ? "? GRANTED" : "? DENIED")}");
-                
-                if (shouldHaveAccess)
-                {
-                    accessibleProjects.Add(project);
-                }
-            }
-            
-            Console.WriteLine($"DocumentSearch: Final result - user can search in {accessibleProjects.Count} projects");
-            if (accessibleProjects.Any())
-            {
-                Console.WriteLine($"DocumentSearch: Searchable projects: {string.Join(", ", accessibleProjects.Select(p => p.ProjectName))}");
-            }
-            else
-            {
-                Console.WriteLine($"DocumentSearch: ? No projects available for searching!");
-            }
-            
-            return accessibleProjects;
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"DocumentSearch: Error in GetProjectsWithReadOnlyAccessAsync: {ex.Message}");
-            return new List<Project>();
-        }
-    }
-
-    /// <summary>
-    /// Validates if a user should have search access to a specific project
-    /// Uses stricter logic: project-specific roles take precedence over global roles
-    /// </summary>
-    private async Task<bool> ValidateProjectSearchAccess(int userId, int projectId, bool hasGlobalReadOnly)
-    {
-        try
-        {
-            // Create a scoped service to avoid context conflicts
-            using var scope = ServiceProvider.CreateScope();
-            var projectRoleService = scope.ServiceProvider.GetRequiredService<ProjectRoleService>();
-            
-            // Get user's project-specific roles for this project
-            var userProjectAccess = await projectRoleService.GetUserProjectAccessAsync(userId);
-            var projectAccess = userProjectAccess.FirstOrDefault(upa => upa.Project.ProjectId == projectId);
-            
-            Console.WriteLine($"DocumentSearch: === Validating access for project {projectId} ===");
-            
-            if (projectAccess != null && projectAccess.ProjectRoles.Any())
-            {
-                // CASE 1: User has project-specific roles
-                Console.WriteLine($"DocumentSearch: User has {projectAccess.ProjectRoles.Count} project-specific roles");
-                
-                foreach (var projectRole in projectAccess.ProjectRoles)
-                {
-                    var roleName = projectRole.ApplicationRole?.Name;
-                    Console.WriteLine($"DocumentSearch: - Project role: '{roleName}'");
-                    
-                    if (roleName != null && IsSearchCapableRole(roleName))
-                    {
-                        Console.WriteLine($"DocumentSearch: ? Found search-capable project role '{roleName}' - ACCESS GRANTED");
-                        return true;
-                    }
-                }
-                
-                // User has project roles but none are search-capable
-                Console.WriteLine($"DocumentSearch: ? User has project roles but NONE allow searching - ACCESS DENIED");
-                Console.WriteLine($"DocumentSearch: Note: Global ReadOnly ({hasGlobalReadOnly}) is OVERRIDDEN by project-specific roles");
-                return false;
-            }
-            else
-            {
-                // CASE 2: User has NO project-specific roles
-                Console.WriteLine($"DocumentSearch: User has NO project-specific roles for this project");
-                
-                if (hasGlobalReadOnly)
-                {
-                    Console.WriteLine($"DocumentSearch: ? Global ReadOnly applies (no conflicting project roles) - ACCESS GRANTED");
-                    return true;
-                }
-                else
-                {
-                    Console.WriteLine($"DocumentSearch: ? No global ReadOnly and no project roles - ACCESS DENIED");
-                    return false;
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"DocumentSearch: ? Error validating project access for project {projectId}: {ex.Message}");
-            return false;
-        }
-    }
-
-    /// <summary>
-    /// Determines if a role allows document searching
-    /// </summary>
-    private bool IsSearchCapableRole(string roleName)
-    {
-        var result = roleName.ToLower() switch
-        {
-            "readonly" => true,
-            "editor" => true,
-            "admin" => true,
-            "auditor" => true,
-            "dataowner" => true,  // DataOwners can search their data
-            "security" => true,   // Security can search for compliance
-            _ => false
-        };
-        
-        Console.WriteLine($"DocumentSearch: Role '{roleName}' search capability: {result}");
-        return result;
-    }
-
     async Task Search()
     {
         isLoading = true;
@@ -551,46 +390,21 @@
                 return;
             }
 
-            // Validate that the user has access to the selected project
-            if (currentUser != null)
+            // Security Check: Ensure selectedProjectId is in the loaded projects list.
+            // Since 'projects' is filtered by AD Group access in OnInitializedAsync,
+            // this check prevents tampering with the dropdown value.
+            if (projects == null || !projects.Any(p => p.ProjectId == selectedProjectId.Value))
             {
-                // Check if user is a global admin
-                var isGlobalAdmin = await UserService.IsGlobalAdminAsync(currentUser.UserId);
-
-                if (!isGlobalAdmin)
-                {
-                    // For non-admin users, validate project access
-                    var hasAccess = await UserProjectAccessService.UserHasProjectAccessAsync(currentUser.UserId, selectedProjectId.Value);
-                    if (!hasAccess)
-                    {
-                        errorMessage = "You do not have permission to access this project. Please contact your administrator.";
-                        results = new List<Document>();
-                        
-                        // Log the access denial
-                        await AuditService.LogProjectAccessAsync(
-                            currentUsername ?? "Unknown",
-                            currentUser.UserId,
-                            selectedProjectId.Value,
-                            AuditActions.ProjectAccessDenied,
-                            AuditResults.Denied,
-                            "Search attempted on unauthorized project");
-                        
-                        return;
-                    }
-                }
-
-                // Log successful project access for admin
-                if (isGlobalAdmin)
-                {
-                    await AuditService.LogAdminOverrideAsync(
-                        currentUsername ?? "Unknown",
-                        currentUser.UserId,
-                        AuditActions.GlobalAdminAccess,
-                        $"Project {selectedProjectId.Value}",
-                        null,
-                        selectedProjectId.Value,
-                        "Global admin accessed project via search");
-                }
+                errorMessage = "Unauthorized project access.";
+                
+                await AuditService.LogProjectAccessAsync(
+                    currentUsername ?? "Unknown",
+                    currentUser?.UserId ?? 0,
+                    selectedProjectId.Value,
+                    AuditActions.ProjectAccessDenied,
+                    AuditResults.Denied,
+                    "Search attempted on unauthorized project (project not in allowed list)");
+                return;
             }
 
             // Perform the search
@@ -631,9 +445,21 @@
         }
     }
 
+    string? viewDocumentSchemaName;
+
     void ShowDetails(int documentId)
     {
         selectedDocumentId = documentId;
+        var doc = results?.FirstOrDefault(d => d.DocumentId == documentId);
+        if (doc != null)
+        {
+            viewDocumentSchemaName = doc.SchemaName;
+            Console.WriteLine($"ShowDetails: DocumentId={documentId}, SchemaName='{doc.SchemaName}'");
+        }
+        else 
+        {
+            Console.WriteLine($"ShowDetails: DocumentId={documentId}, Document NOT FOUND in results.");
+        }
     }
 
     private void ProjectSelectionChanged()
@@ -645,17 +471,25 @@
             {
                 selectedSchemaName = selectedProject.SchemaName;
                 Console.WriteLine($"Project selected: {selectedProjectId}, Schema: {selectedSchemaName}");
+                
+                // Update global state for NavMenu
+                ProjectSelectionState.SetProject(
+                    selectedProject.ProjectId, 
+                    selectedProject.ProjectName, 
+                    selectedProject.EditPrincipal);
             }
             else
             {
                 selectedSchemaName = null;
                 Console.WriteLine("Selected project not found");
+                ProjectSelectionState.SetProject(null, null, null);
             }
         }
         else
         {
             selectedSchemaName = null;
             Console.WriteLine("No project selected");
+            ProjectSelectionState.SetProject(null, null, null);
         }
 
         // Clear previous results when project changes

@@ -1,7 +1,11 @@
 ﻿@using Microsoft.AspNetCore.Components.Authorization
 @using Microsoft.AspNetCore.Components.Routing
+@using Microsoft.AspNetCore.Authentication
 @using DV.Web.Components.Layout
 @using DV.Web.Components.Security
+@inject PersistentComponentState ApplicationState
+@inject IHttpContextAccessor HttpContextAccessor
+@implements IDisposable
 
 <!DOCTYPE html>
 <html lang="en">
@@ -53,3 +57,32 @@
 </body>
 
 </html>
+
+@code {
+    private PersistingComponentStateSubscription _subscription;
+    private string? _accessToken;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _subscription = ApplicationState.RegisterOnPersisting(PersistData);
+
+        if (HttpContextAccessor.HttpContext != null)
+        {
+            _accessToken = await HttpContextAccessor.HttpContext.GetTokenAsync("access_token");
+        }
+    }
+
+    private Task PersistData()
+    {
+        if (_accessToken != null)
+        {
+            ApplicationState.PersistAsJson("AccessToken", _accessToken);
+        }
+        return Task.CompletedTask;
+    }
+
+    public void Dispose()
+    {
+        _subscription.Dispose();
+    }
+}

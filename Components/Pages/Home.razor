@@ -1,28 +1,6 @@
-﻿@* ============================================================================
-   RoleBasedHome.razor - Role-Based Home Page Router
-   ============================================================================
-   
-   Purpose: Automatically redirects users to their appropriate dashboard based
-   on their current active role. This component replaces the traditional home
-   page and provides intelligent routing based on user permissions.
-   
-   Created: [Date]
-   Last Updated: [Date]
-   
-   Dependencies:
-   - DV.Web.Services.RoleContextService: For role context management
-   - Microsoft.AspNetCore.Components.Authentication: For authentication state
-   
-   Notes:
-   - Users with single roles are automatically redirected to their dashboard
-   - Users with multiple roles are directed to role selection if no active role
-   - Provides fallback content for users without proper role configuration
-   ============================================================================ *@
-
-@page "/"
+﻿@page "/"
 @using DV.Web.Services
 @using Microsoft.AspNetCore.Components.Authorization
-@inject RoleContextService RoleContext
 @inject NavigationManager Navigation
 @inject AuthenticationStateProvider AuthStateProvider
 @inject IJSRuntime JSRuntime
@@ -36,355 +14,35 @@
         <div class="text-center">
             <div class="spinner-border text-primary mb-3" role="status" style="width: 3rem; height: 3rem;"></div>
             <h5 class="text-muted">Loading your workspace...</h5>
-            <p class="small text-muted">Determining your role and permissions</p>
-        </div>
-    </div>
-}
-else if (!isAuthenticated)
-{
-    <div class="container mt-5">
-        <div class="row justify-content-center">
-            <div class="col-md-8 col-lg-6">
-                <div class="card shadow">
-                    <div class="card-body text-center py-5">
-                        <i class="bi bi-shield-lock text-warning mb-3" style="font-size: 4rem;"></i>
-                        <h3 class="text-danger mb-3">Authentication Required</h3>
-                        <p class="text-muted mb-4">
-                            You must be authenticated to access the Document Viewer application.
-                        </p>
-                        <a href="/auth/login?returnUrl=/" class="btn btn-primary btn-lg">
-                            <i class="bi bi-box-arrow-in-right me-2"></i>
-                            Sign in with AD FS
-                        </a>
-                    </div>
-                </div>
-                
-                @* Debug panel - Shows authentication state *@
-                <div class="card mt-4 border-info">
-                    <div class="card-header bg-info text-white">
-                        <i class="bi bi-bug me-2"></i>Debug: Authentication State
-                    </div>
-                    <div class="card-body">
-                        <table class="table table-sm table-striped mb-0">
-                            <tbody>
-                                <tr>
-                                    <th style="width: 200px;">Authenticated</th>
-                                    <td><span class="badge @(debugInfo.IsAuthenticated ? "bg-success" : "bg-danger")">@debugInfo.IsAuthenticated</span></td>
-                                </tr>
-                                <tr>
-                                    <th>Identity Name</th>
-                                    <td><code>@(debugInfo.IdentityName ?? "(null)")</code></td>
-                                </tr>
-                                <tr>
-                                    <th>Authentication Type</th>
-                                    <td><code>@(debugInfo.AuthType ?? "(null)")</code></td>
-                                </tr>
-                                <tr>
-                                    <th>Claims Count</th>
-                                    <td>@debugInfo.ClaimsCount</td>
-                                </tr>
-                            </tbody>
-                        </table>
-                        @if (debugInfo.Claims?.Any() == true)
-                        {
-                            <hr />
-                            <h6>Claims:</h6>
-                            <div style="max-height: 200px; overflow-y: auto;">
-                                <table class="table table-sm table-bordered">
-                                    <thead class="table-light">
-                                        <tr>
-                                            <th>Type</th>
-                                            <th>Value</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        @foreach (var claim in debugInfo.Claims)
-                                        {
-                                            <tr>
-                                                <td><small>@claim.Type</small></td>
-                                                <td><code>@claim.Value</code></td>
-                                            </tr>
-                                        }
-                                    </tbody>
-                                </table>
-                            </div>
-                        }
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-}
-else if (showRoleSelection)
-{
-    <!-- This should redirect to role selection page -->
-    <div class="text-center py-5">
-        <p>Redirecting to role selection...</p>
-    </div>
-}
-else if (RoleContext.CurrentRole != null)
-{
-    <!-- Show dashboard content based on role -->
-    <div class="container-fluid">
-        <div class="row">
-            <div class="col-12">
-                @if (!RoleContext.IsCurrentRole("ReadOnly"))
-                {
-                    <!-- Welcome header - NOT shown for ReadOnly users -->
-                    <div class="welcome-header bg-light p-4 mb-4 rounded">
-                        <div class="row align-items-center">
-                            <div class="col-md-8">
-                                <h2 class="mb-2">
-                                    <i class="@RoleContext.GetRoleIcon(RoleContext.CurrentRole.Name) @RoleContext.GetRoleColor(RoleContext.CurrentRole.Name) me-2"></i>
-                                    Welcome to Document Viewer
-                                </h2>
-                                <p class="lead mb-0">
-                                    Operating as: <strong>@RoleContext.CurrentRole.Name</strong>
-                                    @if (RoleContext.HasMultipleRoles)
-                                    {
-                                        <small class="text-muted ms-2">(You can switch roles using the dropdown above)</small>
-                                    }
-                                </p>
-                            </div>
-                            <div class="col-md-4 text-md-end">
-                                <button class="btn btn-primary" @onclick="GoToDashboard">
-                                    <i class="bi bi-speedometer2 me-2"></i>
-                                    Go to @GetDashboardName() Dashboard
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                }
-
-                <!-- Role-specific content -->
-                @if (RoleContext.IsCurrentRole("ReadOnly"))
-                {
-                    <DocumentSearch />
-                }
-                else
-                {
-                    <div class="alert alert-info">
-                        <i class="bi bi-info-circle me-2"></i>
-                        <strong>You're currently on the home page.</strong> 
-                        Click the button above to go to your @GetDashboardName() Dashboard, 
-                        or use the navigation menu to access specific features.
-                    </div>
-                }
-            </div>
+            <p class="small text-muted">Authenticating...</p>
         </div>
     </div>
 }
 else
 {
-    <!-- Fallback for users without roles -->
-    <div class="container mt-5">
-        <div class="row justify-content-center">
-            <div class="col-md-8 col-lg-6">
-                <div class="card shadow border-warning">
-                    <div class="card-body text-center py-5">
-                        <i class="bi bi-exclamation-triangle text-warning mb-3" style="font-size: 4rem;"></i>
-                        <h3 class="text-warning mb-3">No Roles Assigned</h3>
-                        <p class="text-muted mb-4">
-                            You don't have any roles assigned to your account. Please contact your system administrator to get appropriate access permissions.
-                        </p>
-                        <div class="d-flex gap-2 justify-content-center">
-                            <button class="btn btn-outline-secondary" @onclick="GoToLogin">
-                                <i class="bi bi-arrow-left me-2"></i>
-                                Back to Login
-                            </button>
-                            <button class="btn btn-primary" @onclick="ContactAdmin">
-                                <i class="bi bi-envelope me-2"></i>
-                                Contact Administrator
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
+    @* The default and only dashboard for DV_Web *@
+    <DocumentSearch />
 }
 
 @code {
     private bool isLoading = true;
     private bool isAuthenticated = false;
-    private bool showRoleSelection = false;
-    private bool hasRendered = false;
-    private string? initializationError;
-    private DebugAuthInfo debugInfo = new();
 
     protected override async Task OnInitializedAsync()
     {
         try
         {
-            isLoading = true;
-
-            // Check authentication
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
-            var user = authState.User;
-            isAuthenticated = user.Identity?.IsAuthenticated == true;
-
-            // Populate debug info
-            debugInfo = new DebugAuthInfo
-            {
-                IsAuthenticated = isAuthenticated,
-                IdentityName = user.Identity?.Name,
-                AuthType = user.Identity?.AuthenticationType,
-                ClaimsCount = user.Claims.Count(),
-                Claims = user.Claims.Select(c => new ClaimInfo { Type = c.Type, Value = c.Value }).ToList()
-            };
-
-            Console.WriteLine($"Home: Authentication status: {isAuthenticated}");
-            Console.WriteLine($"Home: Identity name: {debugInfo.IdentityName}");
-            Console.WriteLine($"Home: Auth type: {debugInfo.AuthType}");
-            Console.WriteLine($"Home: Claims count: {debugInfo.ClaimsCount}");
-
-            if (!isAuthenticated)
-            {
-                Console.WriteLine("Home: User not authenticated, stopping initialization");
-                isLoading = false;
-                return;
-            }
-
-            Console.WriteLine($"Home: User authenticated as: {authState.User.Identity?.Name}");
-
-            // Initialize role context with improved error handling
-            Console.WriteLine("Home: Starting role context initialization...");
-            var roleInitialized = await RoleContext.InitializeAsync();
-            
-            Console.WriteLine($"Home: Role context initialized: {roleInitialized}");
-            
-            if (roleInitialized)
-            {
-                Console.WriteLine($"Home: User roles count: {RoleContext.UserRoles.Count}");
-                Console.WriteLine($"Home: Has multiple roles: {RoleContext.HasMultipleRoles}");
-                Console.WriteLine($"Home: Current role: {RoleContext.CurrentRole?.Name ?? "None"}");
-                
-                if (RoleContext.UserRoles.Any())
-                {
-                    Console.WriteLine($"Home: Available roles: {string.Join(", ", RoleContext.UserRoles.Select(r => r.Name))}");
-                }
-            }
-            else
-            {
-                Console.WriteLine("Home: Role initialization failed - this means the user was not found or has no roles");
-            }
-            
-            // Handle role-based navigation
-            await HandleRoleBasedNavigation();
+            isAuthenticated = authState.User.Identity?.IsAuthenticated == true;
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Home: Error during initialization: {ex.Message}");
-            Console.WriteLine($"Home: Error stack trace: {ex.StackTrace}");
-            
-            // Store the error for JavaScript logging after render
-            initializationError = $"RoleBasedHome initialization error: {ex.Message}";
+            Console.WriteLine($"Error in Home.razor: {ex.Message}");
+            isAuthenticated = false;
         }
         finally
         {
             isLoading = false;
         }
-    }
-
-    protected override async Task OnAfterRenderAsync(bool firstRender)
-    {
-        if (firstRender)
-        {
-            hasRendered = true;
-            
-            // Now we can safely use JavaScript interop
-            if (!string.IsNullOrEmpty(initializationError))
-            {
-                await JSRuntime.InvokeVoidAsync("console.error", initializationError);
-                initializationError = null; // Clear the error after logging
-            }
-        }
-    }
-
-    private async Task HandleRoleBasedNavigation()
-    {
-        // If user has multiple roles and no active role is set, redirect to role selection
-        if (RoleContext.HasMultipleRoles && RoleContext.CurrentRole == null)
-        {
-            Console.WriteLine("Home: User has multiple roles but no current role - redirecting to role selection");
-            showRoleSelection = true;
-            await Task.Delay(100); // Brief delay for UI update
-            Navigation.NavigateTo("/select-role");
-            return;
-        }
-
-        // If user has a single role or has already selected a role
-        if (RoleContext.CurrentRole != null)
-        {
-            Console.WriteLine($"Home: User has current role '{RoleContext.CurrentRole.Name}' - checking navigation");
-            
-            // For most roles, redirect to their dashboard immediately
-            // ReadOnly users stay on this page as their "dashboard"
-            if (!RoleContext.IsCurrentRole("ReadOnly"))
-            {
-                var dashboardRoute = RoleContext.GetDashboardRouteForRole();
-                if (dashboardRoute != "/")
-                {
-                    Console.WriteLine($"Home: Redirecting to dashboard: {dashboardRoute}");
-                    await Task.Delay(100); // Brief delay for UI update
-                    Navigation.NavigateTo(dashboardRoute);
-                    return;
-                }
-            }
-            else
-            {
-                Console.WriteLine("Home: ReadOnly user stays on home page");
-            }
-        }
-        else
-        {
-            Console.WriteLine("Home: No current role set and role selection not triggered - this might indicate an issue");
-        }
-    }
-
-    private void GoToDashboard()
-    {
-        var dashboardRoute = RoleContext.GetDashboardRouteForRole();
-        Navigation.NavigateTo(dashboardRoute);
-    }
-
-    private string GetDashboardName()
-    {
-        return RoleContext.CurrentRole?.Name switch
-        {
-            "Admin" => "Administration",
-            "Auditor" => "Auditor",
-            "Editor" => "Editor", 
-            "DataOwner" => "Data Owner",
-            "Security" => "Security",
-            _ => "Main"
-        };
-    }
-
-    private async Task ContactAdmin()
-    {
-        if (!hasRendered) return;
-        await JSRuntime.InvokeVoidAsync("alert", "Please contact your system administrator at admin@yourcompany.com for role assignment.");
-    }
-
-    private void GoToLogin()
-    {
-        Navigation.NavigateTo("/login");
-    }
-
-    // Debug info classes
-    private class DebugAuthInfo
-    {
-        public bool IsAuthenticated { get; set; }
-        public string? IdentityName { get; set; }
-        public string? AuthType { get; set; }
-        public int ClaimsCount { get; set; }
-        public List<ClaimInfo>? Claims { get; set; }
-    }
-
-    private class ClaimInfo
-    {
-        public string Type { get; set; } = "";
-        public string Value { get; set; } = "";
     }
 }

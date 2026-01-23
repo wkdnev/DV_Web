@@ -146,7 +146,8 @@ public class ProjectService
                 .SetProperty(p => p.ProjectCode, project.ProjectCode)
                 .SetProperty(p => p.ProjectName, project.ProjectName)
                 .SetProperty(p => p.FolderPath, project.FolderPath)
-                .SetProperty(p => p.Principal, project.Principal)
+                .SetProperty(p => p.ReadPrincipal, project.ReadPrincipal)
+                .SetProperty(p => p.EditPrincipal, project.EditPrincipal)
                 .SetProperty(p => p.Description, project.Description)
                 .SetProperty(p => p.IsActive, project.IsActive)
             );

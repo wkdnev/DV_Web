@@ -24,6 +24,7 @@
 using DV.Shared.Models; // Imports models like Document, Project, etc.
 using DV.Web.Infrastructure.Caching;
 using Microsoft.EntityFrameworkCore; // Provides EF Core functionality
+using System.Security.Claims;
 
 namespace DV.Web.Services; 
 
@@ -49,6 +50,92 @@ public class DocumentRepository
     {
         _context = context;
         _cache = cache;
+    }
+
+    // ========================================================================
+    // Method: GetProjectsForUserAsync
+    // ========================================================================
+    // Purpose: Retrieves projects based on User's AD Group membership.
+    // Parameters:
+    // - user: The ClaimsPrincipal containing user's identity and groups.
+    // Returns: Filtered list of projects.
+    public async Task<IEnumerable<Project>> GetProjectsForUserAsync(ClaimsPrincipal user)
+    {
+        // 1. Get all active projects (cached)
+        var allProjects = await GetProjectsAsync();
+
+        // 2. Extract Groups from Claims
+        //    AD FS and Azure AD can send groups in multiple claim types.
+        //    We aggregate them all to be safe.
+        var userGroups = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var claim in user.Claims)
+        {
+            if (claim.Type == "groups" || 
+                claim.Type == "http://schemas.microsoft.com/ws/2008/06/identity/claims/groups" ||
+                claim.Type == "http://schemas.xmlsoap.org/claims/Group" || 
+                claim.Type == ClaimTypes.GroupSid ||
+                claim.Type == ClaimTypes.Role ||
+                claim.Type == "role") // Explicitly add "role" to handle OIDC standard claims
+            {
+                userGroups.Add(claim.Value);
+            }
+        }
+
+        // 3. Filter Projects where ReadPrincipal OR EditPrincipal matches one of the User's Groups
+        return allProjects.Where(p => 
+            (!string.IsNullOrEmpty(p.ReadPrincipal) && userGroups.Contains(p.ReadPrincipal)) ||
+            (!string.IsNullOrEmpty(p.EditPrincipal) && userGroups.Contains(p.EditPrincipal)));
+    }
+
+    // ========================================================================
+    // Method: HasProjectAccessAsync
+    // ========================================================================
+    // Purpose: Checks if a User has access to a specific Project via AD Groups.
+    // Parameters:
+    // - user: The ClaimsPrincipal containing user's identity and groups.
+    // - projectId: The ID of the project to check.
+    // Returns: boolean indicating access.
+    public async Task<bool> HasProjectAccessAsync(ClaimsPrincipal user, int projectId)
+    {
+        // 1. Get the project
+        var project = await GetProjectAsync("DefaultConnection", projectId);
+        if (project == null) 
+        {
+            Console.WriteLine($"HasProjectAccessAsync: Project {projectId} not found.");
+            return false;
+        }
+
+        // 2. Extract Groups from Claims
+        var userGroups = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        Console.WriteLine($"HasProjectAccessAsync: Checking access for Project {projectId} ({project.ProjectName})");
+        Console.WriteLine($"  - ReadPrincipal: '{project.ReadPrincipal}'");
+        Console.WriteLine($"  - EditPrincipal: '{project.EditPrincipal}'");
+        Console.Write("  - User Groups: ");
+
+        foreach (var claim in user.Claims)
+        {
+            if (claim.Type == "groups" || 
+                claim.Type == "http://schemas.microsoft.com/ws/2008/06/identity/claims/groups" ||
+                claim.Type == "http://schemas.xmlsoap.org/claims/Group" || 
+                claim.Type == ClaimTypes.GroupSid ||
+                claim.Type == ClaimTypes.Role ||
+                claim.Type == "role") 
+            {
+                userGroups.Add(claim.Value);
+                Console.Write($"'{claim.Value}', ");
+            }
+        }
+        Console.WriteLine();
+
+        // 3. Check Permissions
+        bool canRead = !string.IsNullOrEmpty(project.ReadPrincipal) && userGroups.Contains(project.ReadPrincipal);
+        bool canEdit = !string.IsNullOrEmpty(project.EditPrincipal) && userGroups.Contains(project.EditPrincipal);
+        
+        Console.WriteLine($"  - Match Result: Read={canRead}, Edit={canEdit}");
+
+        return canRead || canEdit;
     }
 
     // ========================================================================
@@ -151,7 +238,16 @@ public class DocumentRepository
         sql += " ORDER BY CreatedOn DESC";
         sql += $" OFFSET {(page - 1) * pageSize} ROWS FETCH NEXT {pageSize} ROWS ONLY";
 
-        return await _context.Database.SqlQueryRaw<Document>(sql, parameters.ToArray()).ToListAsync();
+        var documents = await _context.Database.SqlQueryRaw<Document>(sql, parameters.ToArray()).ToListAsync();
+        
+        // Populate SchemaName for each document
+        foreach (var doc in documents)
+        {
+            doc.SchemaName = schemaName;
+        }
+        Console.WriteLine($"SearchInSchemaAsync: Schema='{schemaName}', Matches={documents.Count}");
+        
+        return documents;
     }
 
     // ========================================================================
@@ -183,8 +279,9 @@ public class DocumentRepository
                 var schemaDocuments = await SearchInSchemaAsync(project.SchemaName, searchTerm, 1, int.MaxValue, project.ProjectId);
                 allDocuments.AddRange(schemaDocuments);
             }
-            catch
+            catch (Exception ex)
             {
+                Console.WriteLine($"SearchAcrossAllSchemasAsync: Error searching schema '{project.SchemaName}': {ex.Message}");
                 // Skip schemas that don't exist or have issues
                 continue;
             }
@@ -276,12 +373,39 @@ public class DocumentRepository
     }
 
     // ========================================================================
+    // Method: GetPagesAsync (Overload with Schema)
+    // ========================================================================
+    // Purpose: Retrieves all pages for a specific document from a specific schema.
+    public async Task<IEnumerable<DocumentPage>> GetPagesAsync(string database, string schemaName, int documentId)
+    {
+        try
+        {
+            var sql = $"SELECT * FROM [{schemaName}].[DocumentPage] WHERE DocumentId = {{0}} ORDER BY PageNumber";
+            return await _context.Database.SqlQueryRaw<DocumentPage>(sql, documentId).ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"GetPagesAsync Error: {ex.Message}");
+            return new List<DocumentPage>();
+        }
+    }
+
+    // ========================================================================
     // Method: GetDocumentPagesAsync (Alias for GetPagesAsync)
     // ========================================================================
     // Purpose: Alias for GetPagesAsync to support BLOB viewer component.
     public async Task<List<DocumentPage>> GetDocumentPagesAsync(string database, int documentId)
     {
         var pages = await GetPagesAsync(database, documentId);
+        return pages.ToList();
+    }
+
+     // ========================================================================
+    // Method: GetDocumentPagesAsync (Alias with Schema)
+    // ========================================================================
+    public async Task<List<DocumentPage>> GetDocumentPagesAsync(string database, string schemaName, int documentId)
+    {
+        var pages = await GetPagesAsync(database, schemaName, documentId);
         return pages.ToList();
     }
 

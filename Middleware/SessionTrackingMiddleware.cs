@@ -33,6 +33,25 @@ public class SessionTrackingMiddleware
                         !context.Request.Path.Value.StartsWith("/_content") &&
                         !context.Request.Path.Value.Contains("."))
                     {
+                        // Extract User ID if available
+                        int? userId = null;
+                        var userIdClaim = context.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier) 
+                                       ?? context.User.FindFirst("sub");
+                        if (userIdClaim != null && int.TryParse(userIdClaim.Value, out int parsedId))
+                        {
+                            userId = parsedId;
+                        }
+
+                        // Ensure session is initialized and valid
+                        var session = await sessionService.InitializeSessionAsync(username, userId);
+
+                        if (!session.IsActive)
+                        {
+                             _logger.LogWarning("Access denied for terminated session: {SessionKey}", context.Session.Id);
+                             context.Response.Redirect("/Auth/Logout");
+                             return;
+                        }
+
                         await sessionService.UpdateSessionActivityAsync(
                             "PageView", 
                             context.Request.Method,

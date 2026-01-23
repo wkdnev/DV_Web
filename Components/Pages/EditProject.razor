@@ -1,0 +1,79 @@
+@page "/project/{ProjectId:int}/edit"
+@using DV.Web.Services
+@inject ProjectSelectionState ProjectSelection
+@inject NavigationManager Navigation
+@inject AuthenticationStateProvider AuthStateProvider
+@using System.Security.Claims
+
+<h3>Edit Project: @ProjectName</h3>
+
+@if (hasAccess)
+{
+    @if (isLoading)
+    {
+        <p><em>Loading project details...</em></p>
+    }
+    else
+    {
+        <div class="card">
+            <div class="card-body">
+                <p>This is the edit page for Project ID: <strong>@ProjectId</strong></p>
+                <!-- Form will go here -->
+                <button class="btn btn-primary" disabled>Save Changes</button>
+            </div>
+        </div>
+    }
+}
+else
+{
+    <div class="alert alert-danger">
+        Access Denied. You do not have permission to edit this project.
+    </div>
+}
+
+@code {
+    [Parameter]
+    public int ProjectId { get; set; }
+
+    private string ProjectName => ProjectSelection.SelectedProjectId == ProjectId ? (ProjectSelection.SelectedProjectName ?? $"Project {ProjectId}") : $"Project {ProjectId}";
+    private bool hasAccess = false;
+    private bool isLoading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Security Check (redundant to NavMenu but good practice)
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        
+        // Ensure state is consistent if navigated directly
+        if (ProjectSelection.SelectedProjectId != ProjectId)
+        {
+             // In a real scenario, we might need to fetch the project details and 'EditPrincipal' group here 
+             // if the user deep-linked to this URL without going through the search dropdown.
+             // For now, we rely on the session state or assumed access if coming from menu.
+             // But strict security requires re-validation.
+        }
+
+        // Re-validate permission
+        if (ProjectSelection.SelectedProjectId == ProjectId && !string.IsNullOrEmpty(ProjectSelection.EditPrincipal))
+        {
+             if (user.IsInRole("DV_Global_Admins") || 
+                 user.HasClaim(c => (c.Type == "groups" || c.Type == "role" || c.Type == ClaimTypes.Role) && c.Value == "DV_Global_Admins"))
+             {
+                 hasAccess = true;
+             }
+             else
+             {
+                 hasAccess = user.HasClaim(c => (c.Type == "groups" || c.Type == "role" || c.Type == ClaimTypes.Role) && (c.Value.Equals(ProjectSelection.EditPrincipal, StringComparison.OrdinalIgnoreCase)));
+             }
+        }
+        else
+        {
+            // Fallback for deep linking: validation implies we should fetch the project's edit group.
+            // For this implementation step, we'll assume access if it matches the state, otherwise show denied.
+            // Ideally, we would call a service to GetProject(ProjectId) and check the group.
+        }
+
+        isLoading = false;
+    }
+}

@@ -200,14 +200,17 @@ public class UserService
     // ============================================================================
     // Global Admin Management Methods
     // ============================================================================
+    // NOTE: Global Admin role is restricted to DV_Admin_UI only.
+    // These methods return false or no-op in DV_Web to prevent unauthorized access.
 
     /// <summary>
     /// Checks if a user is a global administrator
     /// </summary>
     public async Task<bool> IsGlobalAdminAsync(int userId)
     {
-        var user = await _context.Users.FindAsync(userId);
-        return user?.IsGlobalAdmin == true;
+        // Global Admin is not supported in DV_Web
+        await Task.CompletedTask;
+        return false;
     }
     
     /// <summary>
@@ -215,8 +218,9 @@ public class UserService
     /// </summary>
     public async Task<bool> IsGlobalAdminAsync(string username)
     {
-        var user = await GetUserByUsernameAsync(username);
-        return user?.IsGlobalAdmin == true;
+        // Global Admin is not supported in DV_Web
+        await Task.CompletedTask;
+        return false;
     }
     
     /// <summary>
@@ -224,12 +228,9 @@ public class UserService
     /// </summary>
     public async Task SetGlobalAdminAsync(int userId, bool isAdmin = true)
     {
-        var user = await _context.Users.FindAsync(userId);
-        if (user != null)
-        {
-            user.IsGlobalAdmin = isAdmin;
-            await _context.SaveChangesAsync();
-        }
+        // No-op in DV_Web
+        _logger.LogWarning($"Attempted to set Global Admin status for user {userId} in DV_Web. Operation ignored.");
+        await Task.CompletedTask;
     }
     
     /// <summary>
@@ -237,10 +238,9 @@ public class UserService
     /// </summary>
     public async Task<List<ApplicationUser>> GetGlobalAdminsAsync()
     {
-        return await _context.Users
-            .Where(u => u.IsGlobalAdmin == true)
-            .OrderBy(u => u.Username)
-            .ToListAsync();
+        // Return empty list in DV_Web
+        await Task.CompletedTask;
+        return new List<ApplicationUser>();
     }
     
     /// <summary>
@@ -414,6 +414,25 @@ public class UserService
         foreach (var duplicate in duplicateUsers)
         {
             await DeleteUserAsync(duplicate.UserId);
+        }
+    }
+    /// <summary>
+    /// Synchronizes the IsGlobalAdmin flag from external claims
+    /// </summary>
+    public async Task SyncGlobalAdminStatusAsync(string username, bool isGlobalAdmin)
+    {
+        var user = await GetUserByUsernameAsync(username);
+        // Compare with explicitly nullable check
+        if (user != null && (user.IsGlobalAdmin ?? false) != isGlobalAdmin)
+        {
+             // Force re-fetch tracking
+             var dbUser = await _context.Users.FindAsync(user.UserId);
+             if (dbUser != null)
+             {
+                 dbUser.IsGlobalAdmin = isGlobalAdmin;
+                 await _context.SaveChangesAsync();
+                 await InvalidateUserCacheAsync(username);
+             }
         }
     }
 

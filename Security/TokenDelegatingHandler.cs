@@ -8,23 +8,19 @@ namespace DV.Web.Security;
 
 public class TokenDelegatingHandler : DelegatingHandler
 {
-    private readonly IHttpContextAccessor _httpContextAccessor;
+    private readonly TokenProvider _tokenProvider;
 
-    public TokenDelegatingHandler(IHttpContextAccessor httpContextAccessor)
+    public TokenDelegatingHandler(TokenProvider tokenProvider)
     {
-        _httpContextAccessor = httpContextAccessor;
+        _tokenProvider = tokenProvider;
     }
 
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
-        var httpContext = _httpContextAccessor.HttpContext;
-        if (httpContext != null)
+        var accessToken = _tokenProvider.AccessToken;
+        if (!string.IsNullOrEmpty(accessToken))
         {
-            var accessToken = await httpContext.GetTokenAsync("access_token");
-            if (!string.IsNullOrEmpty(accessToken))
-            {
-                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
-            }
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
         }
 
         return await base.SendAsync(request, cancellationToken);

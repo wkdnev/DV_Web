@@ -27,19 +27,21 @@ public class GlobalAdminAuthorizationHandler : AuthorizationHandler<GlobalAdminR
         GlobalAdminRequirement requirement)
     {
         // Get the username from the HttpContext
-        var username = _httpContextAccessor.HttpContext?.User?.Identity?.Name;
+        var user = _httpContextAccessor.HttpContext?.User;
         
-        if (string.IsNullOrEmpty(username))
+        if (user?.Identity?.IsAuthenticated != true)
         {
             return; // Not authenticated
         }
 
-        // Check if the user is a global admin
-        var isGlobalAdmin = await _userService.IsGlobalAdminAsync(username);
-        
-        if (isGlobalAdmin)
+        // Check if the user is in the DV_Global_Admins group
+        // We check standard ClaimTypes.Role and "groups" claims
+        if (user.IsInRole("DV_Global_Admins") || 
+            user.HasClaim(c => (c.Type == "groups" || c.Type == "http://schemas.microsoft.com/ws/2008/06/identity/claims/groups") && c.Value == "DV_Global_Admins"))
         {
             context.Succeed(requirement);
         }
+        
+        await Task.CompletedTask;
     }
 }

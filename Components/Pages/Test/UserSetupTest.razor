@@ -6,7 +6,7 @@
 @inject AuthenticationStateProvider AuthStateProvider
 @inject UserService UserService
 @inject RoleService RoleService
-@inject UserProjectAccessService UserProjectAccessService
+@* @inject UserProjectAccessService UserProjectAccessService *@
 @inject ProjectService ProjectService
 @inject IJSRuntime JSRuntime
 @inject IServiceProvider ServiceProvider
@@ -250,7 +250,7 @@
 
             // Step 5: Check/create Invoices project and grant access
             var scopedProjectService = scope.ServiceProvider.GetRequiredService<ProjectService>();
-            var scopedUserProjectAccessService = scope.ServiceProvider.GetRequiredService<UserProjectAccessService>();
+            // var scopedUserProjectAccessService = scope.ServiceProvider.GetRequiredService<UserProjectAccessService>();
 
             var allProjects = await scopedProjectService.GetAllProjectsAsync();
             var invoicesProject = allProjects.FirstOrDefault(p => p.ProjectName.Contains("Invoices") || p.ProjectCode == "INV001");
@@ -267,18 +267,18 @@
             else
             {
                 // Check if user has project access
-                var hasAccess = await scopedUserProjectAccessService.UserHasProjectAccessAsync(user.UserId, invoicesProject.ProjectId);
+                var hasAccess = false; // await scopedUserProjectAccessService.UserHasProjectAccessAsync(user.UserId, invoicesProject.ProjectId);
                 
                 if (!hasAccess)
                 {
                     try
                     {
-                        await scopedUserProjectAccessService.GrantProjectAccessAsync(
+                        /* await scopedUserProjectAccessService.GrantProjectAccessAsync(
                             user.UserId, 
                             invoicesProject.ProjectId, 
                             "System Setup", 
                             "Initial setup for ReadOnly user",
-                            null);
+                            null); */
 
                         setupSteps.Add(new SetupStep
                         {

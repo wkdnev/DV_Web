@@ -16,8 +16,9 @@
    - Bootstrap 5.x for styling
 *@
 
-@page "/viewtiff/{Database}/{TiffDocId:int}"
-@* Defines the route for this page with database and TIFF document ID parameters *@
+@page "/viewtiff/{TiffDocId:int}"
+@page "/viewtiff/{Schema}/{TiffDocId:int}"
+@* Defines the route for this page with schema and TIFF document ID parameters *@
 
 @using DV.Shared.Models
 @using DV.Web.Services
@@ -30,7 +31,6 @@
 
 @inject DocumentRepository Repo
 @inject UserService UserService
-@inject UserProjectAccessService UserProjectAccessService
 @inject AuthenticationStateProvider AuthenticationStateProvider
 @inject IJSRuntime JSRuntime
 
@@ -171,8 +171,9 @@
    Code-Behind Logic for the OpenSeadragon ViewTiff Page
    ============================================================================ *@
 @code {
-    [Parameter] public string Database { get; set; } = "DefaultConnection";
     [Parameter] public int TiffDocId { get; set; }
+    [Parameter] public string? Schema { get; set; }
+    string Database = "DefaultConnection";
     
     private List<DocumentPage>? pages;
     private int currentPageNumber = 1;
@@ -186,7 +187,7 @@
 
     protected override async Task OnParametersSetAsync()
     {
-        Console.WriteLine($"ViewTiff: OnParametersSetAsync called for DocumentId: {TiffDocId}, Database: {Database}");
+        Console.WriteLine($"ViewTiff: OnParametersSetAsync called for DocumentId: {TiffDocId}, Database: {Database}, Schema: {Schema}");
         isLoading = true;
         error = null;
 
@@ -211,29 +212,44 @@
             }
 
             // Fetch the document to get the project ID
-            var doc = await Repo.GetDocumentAsync(Database, DocumentId);
+            Document? doc = null;
+            if (!string.IsNullOrEmpty(Schema))
+            {
+                doc = await Repo.GetDocumentAsync(Database, Schema, DocumentId);
+            }
+            else
+            {
+                doc = await Repo.GetDocumentAsync(Database, DocumentId);
+            }
+
             if (doc == null)
             {
                 error = "Document not found.";
                 return;
             }
 
-            // Check if user is a global admin
-            var userRoles = await UserService.GetUserRolesAsync(currentUser.UserId);
-            var isGlobalAdmin = userRoles.Any(r => r.Name == "Admin");
+            // Validate project access (Strict AD Group Check)
+            // Permission logic relies strictly on AD Group Claims matching Project Read/Edit Principal
+            // OR checks for Global Admin role
+            bool isGlobalAdmin = authState.User.IsInRole("DV_Global_Admins") || authState.User.HasClaim(c => (c.Type == "groups" || c.Type == "http://schemas.microsoft.com/ws/2008/06/identity/claims/groups") && c.Value == "DV_Global_Admins");
+            bool hasGroupAccess = doc.ProjectId.HasValue && await Repo.HasProjectAccessAsync(authState.User, doc.ProjectId.Value);
 
-            if (!isGlobalAdmin)
+            if (!doc.ProjectId.HasValue || (!isGlobalAdmin && !hasGroupAccess))
             {
-                // For non-admin users, validate project access
-                if (!doc.ProjectId.HasValue || !await UserProjectAccessService.UserHasProjectAccessAsync(currentUser.UserId, doc.ProjectId.Value))
-                {
-                    error = "You do not have permission to view documents from this project. Please contact your administrator for access.";
-                    return;
-                }
+                error = "You do not have permission to view documents from this project. Please contact your administrator for access.";
+                return;
             }
 
             // Load the pages
-            pages = (await Repo.GetPagesAsync(Database, DocumentId)).ToList();
+            if (!string.IsNullOrEmpty(Schema))
+            {
+                 pages = (await Repo.GetPagesAsync(Database, Schema, DocumentId)).ToList();
+            }
+            else
+            {
+                 pages = (await Repo.GetPagesAsync(Database, DocumentId)).ToList();
+            }
+
             Console.WriteLine($"ViewTiff: Loaded {pages?.Count ?? 0} pages");
             if (pages != null && pages.Count > 0)
             {
@@ -306,7 +322,11 @@
         else
         {
             // Use traditional file-based API endpoint (already converts to JPEG)
-            return $"/api/tiff-view/{Database}/{DocumentId}/{pageNumber}";
+            if (!string.IsNullOrEmpty(Schema))
+            {
+                return $"/api/tiff-view/{Schema}/{DocumentId}/{pageNumber}";
+            }
+            return $"/api/tiff-view/{DocumentId}/{pageNumber}";
         }
     }
 

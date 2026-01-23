@@ -221,7 +221,6 @@
 
 @code {
     [Parameter] public int DocumentId { get; set; }
-    [Parameter] public string Database { get; set; } = "DefaultConnection";
 
     private List<DocumentPage>? pages;
     private DocumentPage? currentPage => pages?[currentPageIndex];
@@ -242,7 +241,7 @@
 
         try
         {
-            pages = await Repo.GetDocumentPagesAsync(Database, DocumentId);
+            pages = await Repo.GetDocumentPagesAsync("DefaultConnection", DocumentId);
             
             if (pages == null || !pages.Any())
             {
