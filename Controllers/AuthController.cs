@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Mvc;
 using System.Net.Http;
 using System.Security.Claims;
 using System.Text.Json;
+using DV.Shared.Interfaces;
 
 namespace DV.Web.Controllers
 {
@@ -13,11 +14,13 @@ namespace DV.Web.Controllers
     {
         private readonly IConfiguration _configuration;
         private readonly IHttpClientFactory _httpClientFactory;
+        private readonly ICredentialService _credentialService;
 
-        public AuthController(IConfiguration configuration, IHttpClientFactory httpClientFactory)
+        public AuthController(IConfiguration configuration, IHttpClientFactory httpClientFactory, ICredentialService credentialService)
         {
             _configuration = configuration;
             _httpClientFactory = httpClientFactory;
+            _credentialService = credentialService;
         }
 
         /// <summary>
@@ -27,6 +30,10 @@ namespace DV.Web.Controllers
         [AllowAnonymous]
         public IActionResult Login(string? returnUrl = "/")
         {
+            // Prevent redirect-to-logout loop (e.g. /logout, /logout-sso)
+            if (!string.IsNullOrEmpty(returnUrl) && returnUrl.TrimStart('/').StartsWith("logout", StringComparison.OrdinalIgnoreCase))
+                returnUrl = "/";
+
             // If already authenticated, go to home
             if (User.Identity?.IsAuthenticated == true)
             {
@@ -118,6 +125,57 @@ namespace DV.Web.Controllers
                 return View("PasswordLogin");
             }
 
+            // ── Try local credential authentication first (NIST IA-5) ──
+            try
+            {
+                var localUser = await _credentialService.ValidateCredentialAsync(username, password);
+                if (localUser != null)
+                {
+                    // Check MustChangePassword (NIST IA-5(1)(f))
+                    var credential = await _credentialService.GetCredentialInfoAsync(localUser.UserId);
+                    if (credential?.MustChangePassword == true)
+                    {
+                        TempData["MustChangePasswordUserId"] = localUser.UserId;
+                        TempData["MustChangePasswordUsername"] = localUser.Username;
+                        TempData["ReturnUrl"] = returnUrl;
+                        return Redirect("/auth/change-password");
+                    }
+
+                    var claims = new List<Claim>
+                    {
+                        new Claim("unique_name", localUser.Username),
+                        new Claim(ClaimTypes.Name, localUser.Username),
+                        new Claim("auth_method", "local"),
+                        new Claim("user_id", localUser.UserId.ToString())
+                    };
+
+                    if (!string.IsNullOrEmpty(localUser.Email))
+                        claims.Add(new Claim(ClaimTypes.Email, localUser.Email));
+                    if (!string.IsNullOrEmpty(localUser.DisplayName))
+                        claims.Add(new Claim("display_name", localUser.DisplayName));
+
+                    var identity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme, "unique_name", "role");
+                    var principal = new ClaimsPrincipal(identity);
+
+                    await HttpContext.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, principal, new AuthenticationProperties
+                    {
+                        IsPersistent = false,
+                        ExpiresUtc = DateTimeOffset.UtcNow.AddHours(8)
+                    });
+
+                    Console.WriteLine($"=== Local Login Successful ===");
+                    Console.WriteLine($"User: {localUser.Username} (ID: {localUser.UserId})");
+
+                    return Redirect(returnUrl ?? "/");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Local credential check failed: {ex.Message}");
+                // Fall through to ROPC
+            }
+
+            // ── Fall through to AD FS ROPC for domain users ──
             try
             {
                 // Get AD FS token endpoint
@@ -238,9 +296,130 @@ namespace DV.Web.Controllers
             }
         }
 
+        /// <summary>
+        /// Change Password GET - Shows form for mandatory password change (NIST IA-5(1)(f))
+        /// </summary>
+        [HttpGet("/auth/change-password")]
+        [AllowAnonymous]
+        public IActionResult ChangePasswordGet()
+        {
+            var userId = TempData["MustChangePasswordUserId"];
+            var username = TempData["MustChangePasswordUsername"] as string;
+
+            if (userId == null || string.IsNullOrEmpty(username))
+            {
+                return Redirect("/auth/login");
+            }
+
+            // Preserve TempData for the POST
+            TempData.Keep("MustChangePasswordUserId");
+            TempData.Keep("MustChangePasswordUsername");
+            TempData.Keep("ReturnUrl");
+
+            ViewData["Username"] = username;
+            return View("ChangePassword");
+        }
+
+        /// <summary>
+        /// Change Password POST - Processes mandatory password change
+        /// </summary>
+        [HttpPost("/auth/change-password")]
+        [AllowAnonymous]
+        [ValidateAntiForgeryToken]
+        public async Task<IActionResult> ChangePasswordPost(string currentPassword, string newPassword, string confirmPassword)
+        {
+            var userId = TempData["MustChangePasswordUserId"] as int?;
+            var username = TempData["MustChangePasswordUsername"] as string;
+            var returnUrl = TempData["ReturnUrl"] as string ?? "/";
+
+            if (userId == null || string.IsNullOrEmpty(username))
+            {
+                return Redirect("/auth/login");
+            }
+
+            if (string.IsNullOrEmpty(currentPassword) || string.IsNullOrEmpty(newPassword))
+            {
+                TempData["MustChangePasswordUserId"] = userId;
+                TempData["MustChangePasswordUsername"] = username;
+                TempData["ReturnUrl"] = returnUrl;
+                ViewData["Error"] = "All fields are required.";
+                ViewData["Username"] = username;
+                return View("ChangePassword");
+            }
+
+            if (newPassword != confirmPassword)
+            {
+                TempData["MustChangePasswordUserId"] = userId;
+                TempData["MustChangePasswordUsername"] = username;
+                TempData["ReturnUrl"] = returnUrl;
+                ViewData["Error"] = "New passwords do not match.";
+                ViewData["Username"] = username;
+                return View("ChangePassword");
+            }
+
+            if (currentPassword == newPassword)
+            {
+                TempData["MustChangePasswordUserId"] = userId;
+                TempData["MustChangePasswordUsername"] = username;
+                TempData["ReturnUrl"] = returnUrl;
+                ViewData["Error"] = "New password must be different from current password.";
+                ViewData["Username"] = username;
+                return View("ChangePassword");
+            }
+
+            var changeError = await _credentialService.ChangePasswordAsync(userId.Value, currentPassword, newPassword);
+            if (changeError != null)
+            {
+                TempData["MustChangePasswordUserId"] = userId;
+                TempData["MustChangePasswordUsername"] = username;
+                TempData["ReturnUrl"] = returnUrl;
+                ViewData["Error"] = changeError;
+                ViewData["Username"] = username;
+                return View("ChangePassword");
+            }
+
+            // Sign them in now
+            var claims = new List<Claim>
+            {
+                new Claim("unique_name", username),
+                new Claim(ClaimTypes.Name, username),
+                new Claim("auth_method", "local"),
+                new Claim("user_id", userId.Value.ToString())
+            };
+
+            var identity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme, "unique_name", "role");
+            var principal = new ClaimsPrincipal(identity);
+
+            await HttpContext.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, principal, new AuthenticationProperties
+            {
+                IsPersistent = false,
+                ExpiresUtc = DateTimeOffset.UtcNow.AddHours(8)
+            });
+
+            return Redirect(returnUrl);
+        }
+
+        /// <summary>
+        /// Logout — clears the authentication cookie and redirects to login choice.
+        /// Does NOT trigger OIDC sign-out (which can cause AD FS WIA to auto-re-authenticate).
+        /// </summary>
         [HttpGet("/logout")]
         [HttpPost("/logout")]
-        public IActionResult Logout()
+        [AllowAnonymous]
+        public async Task<IActionResult> Logout()
+        {
+            await HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+            return Redirect("/login-choice");
+        }
+
+        /// <summary>
+        /// Full SSO logout — signs out of both cookie and OIDC (AD FS).
+        /// Use when the user explicitly wants to end their AD FS session too.
+        /// </summary>
+        [HttpGet("/logout-sso")]
+        [HttpPost("/logout-sso")]
+        [AllowAnonymous]
+        public IActionResult LogoutSso()
         {
             return SignOut(new AuthenticationProperties
             {

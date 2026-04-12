@@ -1,0 +1,584 @@
+@* ============================================================================
+   Notifications.razor - Personal Notifications Page (Web UI)
+   ============================================================================
+   NIST SP 800-53 Rev 5: SI-5 (Security Alerts dissemination)
+   
+   Features:
+   - Paginated notification list with filtering and sorting
+   - Category filter (All, Bad File Report, Batch Import, etc.)
+   - Read/Unread filter with visual distinction
+   - Important flag with priority indicator
+   - Bulk select & delete, mark all read
+   - Relative timestamps with full UTC tooltip
+   - Responsive layout with card-based design
+   ============================================================================ *@
+
+@page "/notifications"
+@rendermode InteractiveServer
+
+@using DV.Web.Services
+@using DV.Shared.DTOs
+@using DV.Shared.Security
+@inject NotificationApiService NotificationService
+
+<div class="dashboard-container">
+    <!-- Page Header -->
+    <div class="page-header">
+        <div class="header-icon">
+            <i class="bi bi-bell"></i>
+        </div>
+        <div class="header-content">
+            <h1>Notifications</h1>
+            <p>
+                @if (_response != null && _response.UnreadCount > 0)
+                {
+                    <span class="nt-badge accent" style="margin-right:8px;">@_response.UnreadCount unread</span>
+                }
+                @if (_response != null)
+                {
+                    <span>@_response.TotalCount total notifications</span>
+                }
+            </p>
+        </div>
+    </div>
+
+    <!-- Toolbar -->
+    <div class="nt-toolbar">
+        <div class="nt-toolbar-inner">
+            <!-- Category Filter -->
+            <div class="nt-filter-group" style="max-width:200px;">
+                <label class="nt-filter-icon" for="categoryFilter">
+                    <i class="bi bi-funnel"></i>
+                </label>
+                <select id="categoryFilter" class="nt-select" @bind="_selectedCategory" @bind:after="LoadNotificationsAsync">
+                    <option value="">All Categories</option>
+                    <option value="@NotificationCategories.BadFileReport">Bad File Report</option>
+                    <option value="@NotificationCategories.BatchImport">Batch Import</option>
+                    <option value="@NotificationCategories.BatchExport">Batch Export</option>
+                    <option value="@NotificationCategories.DocumentUpload">Document Upload</option>
+                    <option value="@NotificationCategories.Security">Security</option>
+                    <option value="@NotificationCategories.System">System</option>
+                    <option value="@NotificationCategories.RoleChange">Role Change</option>
+                    <option value="@NotificationCategories.ProjectAccess">Project Access</option>
+                    <option value="@NotificationCategories.General">General</option>
+                </select>
+            </div>
+
+            <!-- Read/Unread Filter -->
+            <div class="nt-filter-group" style="max-width:160px;">
+                <label class="nt-filter-icon" for="readFilter">
+                    <i class="bi bi-eye"></i>
+                </label>
+                <select id="readFilter" class="nt-select" @bind="_selectedReadFilter" @bind:after="LoadNotificationsAsync">
+                    <option value="">All</option>
+                    <option value="false">Unread</option>
+                    <option value="true">Read</option>
+                </select>
+            </div>
+
+            <!-- Important Filter -->
+            <div class="nt-filter-group" style="max-width:180px;">
+                <label class="nt-filter-icon" for="importantFilter">
+                    <i class="bi bi-star"></i>
+                </label>
+                <select id="importantFilter" class="nt-select" @bind="_selectedImportantFilter" @bind:after="LoadNotificationsAsync">
+                    <option value="">All Priority</option>
+                    <option value="true">Important Only</option>
+                </select>
+            </div>
+
+            <div style="flex:1;"></div>
+
+            <!-- Bulk Actions -->
+            @if (_selectedIds.Count > 0)
+            {
+                <button class="nt-btn danger" @onclick="BulkDeleteSelectedAsync">
+                    <i class="bi bi-trash"></i>
+                    Delete (@_selectedIds.Count)
+                </button>
+            }
+
+            <button class="nt-btn accent" @onclick="MarkAllAsReadAsync" disabled="@(_response?.UnreadCount == 0)">
+                <i class="bi bi-check2-all"></i>
+                Mark All Read
+            </button>
+
+            <button class="nt-btn secondary" @onclick="LoadNotificationsAsync">
+                <i class="bi bi-arrow-clockwise"></i>
+                Refresh
+            </button>
+        </div>
+    </div>
+
+    <!-- Notification List -->
+    @if (_isLoading)
+    {
+        <div class="nt-empty">
+            <div class="nt-spinner"></div>
+        </div>
+    }
+    else if (_response == null || _response.Notifications.Count == 0)
+    {
+        <div class="nt-empty">
+            <i class="bi bi-bell-slash" style="font-size:3rem;opacity:.15;"></i>
+            <h5 style="color:var(--text-muted);margin-top:.75rem;">No notifications</h5>
+            <p style="color:var(--text-muted);">You're all caught up!</p>
+        </div>
+    }
+    else
+    {
+        <div class="nt-list">
+            @foreach (var notification in _response.Notifications)
+            {
+                <div class="nt-card @(notification.IsRead ? "read" : "unread") @(notification.IsImportant ? "important" : "")">
+                    <div class="nt-card-inner">
+                        <!-- Checkbox -->
+                        <div style="padding-top:2px;">
+                            <input type="checkbox" class="nt-check"
+                                   checked="@_selectedIds.Contains(notification.NotificationId)"
+                                   @onchange="() => ToggleSelection(notification.NotificationId)" />
+                        </div>
+
+                        <!-- Category Icon -->
+                        <div class="nt-cat-icon @GetCategoryColorClass(notification.Category)">
+                            <i class="bi @GetCategoryIcon(notification.Category)"></i>
+                        </div>
+
+                        <!-- Content -->
+                        <div style="flex:1;min-width:0;">
+                            <div class="nt-title-row">
+                                @if (notification.IsImportant)
+                                {
+                                    <i class="bi bi-star-fill" style="color:var(--gold);"></i>
+                                }
+                                @if (!notification.IsRead)
+                                {
+                                    <span class="nt-badge accent" style="font-size:.65rem;padding:1px 6px;">NEW</span>
+                                }
+                                <strong class="@(notification.IsRead ? "nt-read-title" : "")">@notification.Title</strong>
+                                <span class="nt-badge muted">@notification.Category</span>
+                            </div>
+                            <p class="nt-message @(notification.IsRead ? "read" : "")">
+                                @notification.Message
+                            </p>
+                            <div class="nt-meta">
+                                <span title="@notification.CreatedAtUtc.ToString("yyyy-MM-dd HH:mm:ss UTC")">
+                                    <i class="bi bi-clock"></i>@notification.RelativeTime
+                                </span>
+                                @if (!string.IsNullOrEmpty(notification.SourceSystem))
+                                {
+                                    <span><i class="bi bi-box"></i>@notification.SourceSystem</span>
+                                }
+                                @if (notification.ReadAtUtc.HasValue)
+                                {
+                                    <span title="@notification.ReadAtUtc.Value.ToString("yyyy-MM-dd HH:mm:ss UTC")">
+                                        <i class="bi bi-eye"></i>Read
+                                    </span>
+                                }
+                            </div>
+                        </div>
+
+                        <!-- Actions -->
+                        <div class="nt-actions">
+                            @if (!notification.IsRead)
+                            {
+                                <button class="nt-btn-icon green" title="Mark as read"
+                                        @onclick="() => MarkAsReadAsync(notification.NotificationId)">
+                                    <i class="bi bi-check2"></i>
+                                </button>
+                            }
+                            <button class="nt-btn-icon red" title="Delete"
+                                    @onclick="() => DeleteNotificationAsync(notification.NotificationId)">
+                                <i class="bi bi-x-lg"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            }
+        </div>
+
+        <!-- Pagination -->
+        @if (_response.TotalPages > 1)
+        {
+            <div class="nt-pagination">
+                <span class="nt-page-info">
+                    Page <strong>@_currentPage</strong> of <strong>@_response.TotalPages</strong>
+                    <span style="margin-left:6px;">(@_response.TotalCount total)</span>
+                </span>
+                <div style="display:flex;gap:2px;">
+                    <button class="nt-page-btn" disabled="@(_currentPage <= 1)"
+                            @onclick="() => GoToPageAsync(_currentPage - 1)">
+                        <i class="bi bi-chevron-left"></i>
+                    </button>
+                    @for (var i = Math.Max(1, _currentPage - 2); i <= Math.Min(_response.TotalPages, _currentPage + 2); i++)
+                    {
+                        var pageNum = i;
+                        <button class="nt-page-btn @(pageNum == _currentPage ? "active" : "")"
+                                @onclick="() => GoToPageAsync(pageNum)">@pageNum</button>
+                    }
+                    <button class="nt-page-btn" disabled="@(_currentPage >= _response.TotalPages)"
+                            @onclick="() => GoToPageAsync(_currentPage + 1)">
+                        <i class="bi bi-chevron-right"></i>
+                    </button>
+                </div>
+            </div>
+        }
+    }
+
+    @if (!string.IsNullOrEmpty(_statusMessage))
+    {
+        <div class="nt-toast-wrap">
+            <div class="nt-toast @(_statusIsError ? "error" : "success")">
+                <span>
+                    <i class="bi @(_statusIsError ? "bi-exclamation-circle" : "bi-check-circle")"></i>
+                    @_statusMessage
+                </span>
+                <button class="nt-toast-close" @onclick="() => _statusMessage = null">&times;</button>
+            </div>
+        </div>
+    }
+</div>
+
+<style>
+    /* ── Toolbar ── */
+    .nt-toolbar {
+        background: var(--bg-surface);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 8px 14px;
+        margin-bottom: 1rem;
+    }
+    .nt-toolbar-inner {
+        display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+    }
+
+    /* ── Filter Groups ── */
+    .nt-filter-group {
+        display: flex; align-items: stretch; flex: 1;
+    }
+    .nt-filter-icon {
+        display: flex; align-items: center; justify-content: center;
+        padding: 0 10px;
+        background: var(--bg-inset);
+        border: 1px solid var(--border);
+        border-right: none;
+        border-radius: 6px 0 0 6px;
+        color: var(--text-muted);
+        font-size: .82rem;
+    }
+    .nt-select {
+        flex: 1;
+        padding: 5px 10px;
+        background: var(--bg-input);
+        border: 1px solid var(--border);
+        border-radius: 0 6px 6px 0;
+        color: var(--text);
+        font-size: .82rem;
+        outline: none;
+        cursor: pointer;
+    }
+    .nt-select:focus { border-color: var(--accent); }
+    .nt-select option { background: var(--bg-surface); color: var(--text); }
+
+    /* ── Buttons ── */
+    .nt-btn {
+        display: inline-flex; align-items: center; gap: 6px;
+        padding: 5px 12px; border-radius: 6px;
+        font-size: .82rem; font-weight: 500;
+        cursor: pointer; border: none; transition: background .15s;
+    }
+    .nt-btn.accent   { background: transparent; color: var(--accent);
+        border: 1px solid var(--accent); }
+    .nt-btn.accent:hover { background: rgba(88,166,255,.08); }
+    .nt-btn.accent:disabled { opacity:.4; cursor:not-allowed; }
+    .nt-btn.secondary { background: transparent; color: var(--text-secondary);
+        border: 1px solid var(--border); }
+    .nt-btn.secondary:hover { border-color: var(--text-muted); color: var(--text); }
+    .nt-btn.danger    { background: transparent; color: var(--red);
+        border: 1px solid var(--red); }
+    .nt-btn.danger:hover { background: rgba(248,81,73,.08); }
+
+    /* ── Icon Buttons (card actions) ── */
+    .nt-btn-icon {
+        display: inline-flex; align-items: center; justify-content: center;
+        width: 30px; height: 30px; border-radius: 6px;
+        border: 1px solid var(--border); background: transparent;
+        cursor: pointer; transition: all .15s; font-size: .85rem;
+    }
+    .nt-btn-icon.green { color: var(--green); }
+    .nt-btn-icon.green:hover { background: rgba(63,185,80,.1); border-color: var(--green); }
+    .nt-btn-icon.red   { color: var(--red); }
+    .nt-btn-icon.red:hover { background: rgba(248,81,73,.1); border-color: var(--red); }
+
+    /* ── Empty / Loading ── */
+    .nt-empty {
+        display: flex; flex-direction: column; align-items: center;
+        padding: 3rem 1rem; color: var(--text-muted);
+    }
+    .nt-spinner {
+        width: 36px; height: 36px;
+        border: 3px solid var(--border);
+        border-top-color: var(--accent);
+        border-radius: 50%;
+        animation: nt-spin .8s linear infinite;
+    }
+    @@keyframes nt-spin { to { transform: rotate(360deg); } }
+
+    /* ── Notification Cards ── */
+    .nt-list { display: flex; flex-direction: column; gap: 6px; }
+
+    .nt-card {
+        background: var(--bg-surface);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        border-left: 3px solid transparent;
+        transition: all .15s ease;
+    }
+    .nt-card:hover {
+        box-shadow: 0 2px 10px rgba(0,0,0,.15);
+        transform: translateY(-1px);
+    }
+    .nt-card.unread {
+        border-left-color: var(--accent);
+        background: var(--accent-bg-subtle, rgba(88,166,255,.04));
+    }
+    .nt-card.read { opacity: .7; }
+    .nt-card.important.unread {
+        border-left-color: var(--gold);
+        background: rgba(210,153,34,.04);
+    }
+
+    .nt-card-inner {
+        display: flex; align-items: flex-start; gap: 10px;
+        padding: 10px 14px;
+    }
+
+    /* ── Checkbox ── */
+    .nt-check {
+        width: 16px; height: 16px;
+        accent-color: var(--accent);
+        cursor: pointer;
+    }
+
+    /* ── Category icon ── */
+    .nt-cat-icon {
+        font-size: 1.2rem; padding-top: 2px;
+    }
+    .nt-cat-icon.cat-accent  { color: var(--accent); }
+    .nt-cat-icon.cat-warning { color: var(--gold); }
+    .nt-cat-icon.cat-danger  { color: var(--red); }
+    .nt-cat-icon.cat-info    { color: var(--accent); }
+
+    /* ── Title Row ── */
+    .nt-title-row {
+        display: flex; align-items: center; gap: 6px; margin-bottom: 4px;
+        flex-wrap: wrap;
+    }
+    .nt-read-title { color: var(--text-muted); }
+
+    /* ── Badge ── */
+    .nt-badge {
+        display: inline-block; font-size: .7rem; padding: 2px 8px;
+        border-radius: 10px; font-weight: 600;
+    }
+    .nt-badge.accent {
+        background: var(--accent-bg-subtle, rgba(88,166,255,.12));
+        color: var(--accent);
+    }
+    .nt-badge.muted {
+        background: var(--bg-inset);
+        color: var(--text-muted);
+        border: 1px solid var(--border-muted);
+    }
+
+    /* ── Message ── */
+    .nt-message {
+        font-size: .84rem; margin: 0 0 4px 0;
+        color: var(--text-secondary);
+    }
+    .nt-message.read { color: var(--text-muted); }
+
+    /* ── Meta row ── */
+    .nt-meta {
+        display: flex; align-items: center; gap: 14px;
+        font-size: .73rem; color: var(--text-muted);
+    }
+    .nt-meta i { margin-right: 3px; }
+
+    /* ── Actions ── */
+    .nt-actions {
+        display: flex; align-items: center; gap: 4px;
+    }
+
+    /* ── Pagination ── */
+    .nt-pagination {
+        display: flex; align-items: center; justify-content: center;
+        gap: 12px; padding: 1rem 0; margin-top: .5rem;
+    }
+    .nt-page-info {
+        font-size: .8rem; color: var(--text-muted);
+    }
+    .nt-page-btn {
+        background: transparent; border: 1px solid var(--border);
+        color: var(--text-secondary); border-radius: 4px;
+        padding: 4px 10px; cursor: pointer; font-size: .82rem;
+        transition: all .15s;
+    }
+    .nt-page-btn:hover:not(:disabled):not(.active) {
+        border-color: var(--accent); color: var(--text);
+    }
+    .nt-page-btn.active {
+        background: var(--accent); color: #fff; border-color: var(--accent);
+    }
+    .nt-page-btn:disabled { opacity: .35; cursor: not-allowed; }
+
+    /* ── Toast ── */
+    .nt-toast-wrap {
+        position: fixed; bottom: 1rem; right: 1rem; z-index: 1080;
+    }
+    .nt-toast {
+        display: flex; align-items: center; justify-content: space-between;
+        gap: 12px; padding: 10px 16px; border-radius: 8px;
+        font-size: .85rem; color: #fff; min-width: 260px;
+        box-shadow: 0 4px 16px rgba(0,0,0,.3);
+    }
+    .nt-toast i { margin-right: 6px; }
+    .nt-toast.success { background: var(--green); }
+    .nt-toast.error   { background: var(--red); }
+    .nt-toast-close {
+        background: none; border: none; color: rgba(255,255,255,.7);
+        font-size: 1.2rem; cursor: pointer; line-height: 1;
+    }
+    .nt-toast-close:hover { color: #fff; }
+</style>
+
+@code {
+    private NotificationListResponseDto? _response;
+    private bool _isLoading = true;
+    private int _currentPage = 1;
+    private const int PageSize = 20;
+    private string? _selectedCategory;
+    private string? _selectedReadFilter;
+    private string? _selectedImportantFilter;
+    private HashSet<int> _selectedIds = new();
+    private string? _statusMessage;
+    private bool _statusIsError;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadNotificationsAsync();
+    }
+
+    private async Task LoadNotificationsAsync()
+    {
+        _isLoading = true;
+        StateHasChanged();
+
+        bool? isRead = string.IsNullOrEmpty(_selectedReadFilter) ? null : bool.Parse(_selectedReadFilter);
+        bool? isImportant = string.IsNullOrEmpty(_selectedImportantFilter) ? null : bool.Parse(_selectedImportantFilter);
+
+        _response = await NotificationService.GetNotificationsAsync(
+            page: _currentPage,
+            pageSize: PageSize,
+            category: _selectedCategory,
+            isRead: isRead,
+            isImportant: isImportant);
+
+        _selectedIds.Clear();
+        _isLoading = false;
+    }
+
+    private async Task GoToPageAsync(int page)
+    {
+        _currentPage = page;
+        await LoadNotificationsAsync();
+    }
+
+    private async Task MarkAsReadAsync(int notificationId)
+    {
+        var success = await NotificationService.MarkAsReadAsync(notificationId);
+        if (success)
+        {
+            ShowStatus("Notification marked as read");
+            await LoadNotificationsAsync();
+        }
+        else
+        {
+            ShowStatus("Failed to mark notification as read", true);
+        }
+    }
+
+    private async Task MarkAllAsReadAsync()
+    {
+        var count = await NotificationService.MarkAllAsReadAsync();
+        ShowStatus($"{count} notifications marked as read");
+        await LoadNotificationsAsync();
+    }
+
+    private async Task DeleteNotificationAsync(int notificationId)
+    {
+        var success = await NotificationService.DeleteNotificationAsync(notificationId);
+        if (success)
+        {
+            ShowStatus("Notification deleted");
+            await LoadNotificationsAsync();
+        }
+        else
+        {
+            ShowStatus("Failed to delete notification", true);
+        }
+    }
+
+    private async Task BulkDeleteSelectedAsync()
+    {
+        if (_selectedIds.Count == 0) return;
+
+        var count = await NotificationService.BulkDeleteAsync(_selectedIds.ToList());
+        _selectedIds.Clear();
+        ShowStatus($"{count} notifications deleted");
+        await LoadNotificationsAsync();
+    }
+
+    private void ToggleSelection(int notificationId)
+    {
+        if (!_selectedIds.Remove(notificationId))
+        {
+            _selectedIds.Add(notificationId);
+        }
+    }
+
+    private void ShowStatus(string message, bool isError = false)
+    {
+        _statusMessage = message;
+        _statusIsError = isError;
+
+        _ = Task.Delay(3000).ContinueWith(_ =>
+        {
+            _statusMessage = null;
+            InvokeAsync(StateHasChanged);
+        });
+    }
+
+    private static string GetCategoryIcon(string category) => category switch
+    {
+        NotificationCategories.BadFileReport => "bi-exclamation-triangle",
+        NotificationCategories.BatchImport => "bi-cloud-upload",
+        NotificationCategories.BatchExport => "bi-cloud-download",
+        NotificationCategories.DocumentUpload => "bi-file-earmark-arrow-up",
+        NotificationCategories.Security => "bi-shield-exclamation",
+        NotificationCategories.System => "bi-gear",
+        NotificationCategories.RoleChange => "bi-person-badge",
+        NotificationCategories.ProjectAccess => "bi-folder-check",
+        NotificationCategories.SessionAlert => "bi-clock-history",
+        _ => "bi-bell"
+    };
+
+    private static string GetCategoryColorClass(string category) => category switch
+    {
+        NotificationCategories.BadFileReport => "cat-warning",
+        NotificationCategories.Security => "cat-danger",
+        NotificationCategories.System => "cat-info",
+        NotificationCategories.SessionAlert => "cat-warning",
+        _ => "cat-accent"
+    };
+}

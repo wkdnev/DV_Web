@@ -1,0 +1,1727 @@
+@page "/manage/bulk-upload"
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.AspNetCore.Components.Forms
+@using DV.Shared.Models
+@using System.IO
+@using System.IO.Compression
+@using System.Text
+@inject DocumentRepository Repo
+@inject BulkUploadApiService BulkUploadApi
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject ProjectSelectionState ProjectSelectionState
+@inject UserService UserService
+@inject AuditService AuditService
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+@attribute [Authorize]
+@implements IDisposable
+@rendermode InteractiveServer
+
+<PageTitle>Bulk Upload - @(ProjectSelectionState.SelectedProjectName ?? "Document Viewer")</PageTitle>
+
+@if (!hasAccess)
+{
+    <div class="bu-page">
+        <div class="bu-empty">
+            @if (isLoading)
+            {
+                <div class="bu-spinner"></div>
+                <p>Verifying access...</p>
+            }
+            else
+            {
+                <i class="bi bi-shield-lock" style="font-size:2.5rem;opacity:0.3;color:var(--red);"></i>
+                <h3 style="color:var(--text-bright);">Access Denied</h3>
+                <p style="color:var(--text-secondary);">@accessDeniedMessage</p>
+                <a href="/manage" class="bu-btn primary" style="margin-top:8px;">
+                    <i class="bi bi-arrow-left"></i>Back to Manage
+                </a>
+            }
+        </div>
+    </div>
+}
+else
+{
+    <div class="bu-page">
+        <!-- Header Banner -->
+        <div class="bu-header">
+            <div class="bu-header-inner">
+                <div class="bu-header-left">
+                    <div class="bu-header-icon">
+                        <i class="bi bi-cloud-arrow-up"></i>
+                    </div>
+                    <div>
+                        <div class="bu-header-title">Bulk Upload</div>
+                        <div class="bu-header-sub">
+                            <i class="bi bi-database"></i> @ProjectSelectionState.SelectedSchemaName
+                            <span style="margin:0 6px;">•</span>
+                            @ProjectSelectionState.SelectedProjectName
+                        </div>
+                    </div>
+                </div>
+                <div style="display:flex;gap:8px;">
+                    <button class="bu-btn secondary" @onclick="DownloadCsvTemplate">
+                        <i class="bi bi-download"></i>CSV Template
+                    </button>
+                    <a href="/manage" class="bu-btn secondary">
+                        <i class="bi bi-arrow-left"></i>Back
+                    </a>
+                </div>
+            </div>
+        </div>
+
+        <!-- Step Indicator -->
+        <div class="bu-steps">
+            <div class="bu-step @(currentStep == 1 ? "active" : currentStep > 1 ? "done" : "")">
+                <div class="bu-step-num">@(currentStep > 1 ? "✓" : "1")</div>
+                <span>Select Files</span>
+            </div>
+            <div class="bu-step-line @(currentStep > 1 ? "done" : "")"></div>
+            <div class="bu-step @(currentStep == 2 ? "active" : currentStep > 2 ? "done" : "")">
+                <div class="bu-step-num">@(currentStep > 2 ? "✓" : "2")</div>
+                <span>Edit Metadata</span>
+            </div>
+            <div class="bu-step-line @(currentStep > 2 ? "done" : "")"></div>
+            <div class="bu-step @(currentStep == 3 ? "active" : "")">
+                <div class="bu-step-num">3</div>
+                <span>Upload</span>
+            </div>
+        </div>
+
+        @* ─── STEP 1: Select Files ─── *@
+        @if (currentStep == 1)
+        {
+            <!-- Import Mode Tabs -->
+            <div class="bu-mode-tabs">
+                <button class="bu-mode-tab @(importMode == ImportMode.Files ? "active" : "")"
+                        @onclick="() => SetImportMode(ImportMode.Files)">
+                    <i class="bi bi-files"></i>Multiple Files
+                </button>
+                <button class="bu-mode-tab @(importMode == ImportMode.Zip ? "active" : "")"
+                        @onclick="() => SetImportMode(ImportMode.Zip)">
+                    <i class="bi bi-file-zip"></i>ZIP Archive
+                </button>
+                <button class="bu-mode-tab @(importMode == ImportMode.Csv ? "active" : "")"
+                        @onclick="() => SetImportMode(ImportMode.Csv)">
+                    <i class="bi bi-filetype-csv"></i>CSV-Driven
+                </button>
+            </div>
+
+            <div class="bu-card">
+                @if (importMode == ImportMode.Files)
+                {
+                    <!-- Multi-File Upload -->
+                    <div class="bu-card-header">
+                        <i class="bi bi-files" style="color:var(--accent);"></i>
+                        <strong>Select Multiple Files</strong>
+                    </div>
+                    <div class="bu-card-body">
+                        <p class="bu-hint">
+                            Select 2 or more document files. Supported formats: PDF, TIFF, JPG, PNG, BMP, GIF.
+                            Maximum 100 files per batch, 500 MB total.
+                        </p>
+                        <div class="bu-drop-zone" @ref="dropZoneRef">
+                            <i class="bi bi-cloud-arrow-up" style="font-size:2.5rem;opacity:0.3;"></i>
+                            <p>Drag &amp; drop files here, or click to browse</p>
+                            <InputFile class="bu-file-input" OnChange="OnMultipleFilesSelected"
+                                       multiple accept=".pdf,.tiff,.tif,.jpg,.jpeg,.png,.bmp,.gif" />
+                            <span class="bu-file-hint">PDF, TIFF, JPG, PNG, BMP, GIF — max 100 files / 500 MB</span>
+                        </div>
+                    </div>
+                }
+                else if (importMode == ImportMode.Zip)
+                {
+                    <!-- ZIP Upload -->
+                    <div class="bu-card-header">
+                        <i class="bi bi-file-zip" style="color:var(--gold);"></i>
+                        <strong>Upload ZIP Archive</strong>
+                    </div>
+                    <div class="bu-card-body">
+                        <p class="bu-hint">
+                            Upload a ZIP file containing 2 or more document files. The archive will be extracted
+                            and each file added to the staging list for metadata assignment.
+                        </p>
+                        <div class="bu-drop-zone">
+                            <i class="bi bi-file-earmark-zip" style="font-size:2.5rem;opacity:0.3;"></i>
+                            <p>Select a ZIP archive</p>
+                            <InputFile class="bu-file-input" OnChange="OnZipFileSelected"
+                                       accept=".zip" />
+                            <span class="bu-file-hint">ZIP archive — max 500 MB</span>
+                        </div>
+                        @if (isExtractingZip)
+                        {
+                            <div class="bu-alert info" style="margin-top:12px;">
+                                <span class="bu-spinner-sm"></span>
+                                Extracting archive...
+                            </div>
+                        }
+                    </div>
+                }
+                else if (importMode == ImportMode.Csv)
+                {
+                    <!-- CSV-Driven Upload -->
+                    <div class="bu-card-header">
+                        <i class="bi bi-filetype-csv" style="color:var(--green-bright);"></i>
+                        <strong>CSV-Driven Import</strong>
+                    </div>
+                    <div class="bu-card-body">
+                        <p class="bu-hint">
+                            Upload a CSV manifest file that maps filenames to metadata, then upload the
+                            matching document files. The CSV must have a <code>FileName</code> column.
+                            <button class="bu-link-btn" @onclick="DownloadCsvTemplate">Download CSV template</button>
+                        </p>
+
+                        <div class="bu-field">
+                            <label class="bu-label">Step 1 — CSV Manifest</label>
+                            <InputFile class="bu-input" OnChange="OnCsvFileSelected"
+                                       accept=".csv" />
+                        </div>
+
+                        @if (csvParseMessage != null)
+                        {
+                            <div class="bu-alert @(csvParseSuccess ? "success" : "error")">
+                                <i class="bi @(csvParseSuccess ? "bi-check-circle" : "bi-exclamation-triangle")"></i>
+                                @csvParseMessage
+                            </div>
+                        }
+
+                        @if (csvParsedCount > 0)
+                        {
+                            <div class="bu-field" style="margin-top:12px;">
+                                <label class="bu-label">Step 2 — Upload matching files (@csvParsedCount files expected)</label>
+                                <InputFile class="bu-input" OnChange="OnCsvMatchingFilesSelected"
+                                           multiple accept=".pdf,.tiff,.tif,.jpg,.jpeg,.png,.bmp,.gif" />
+                            </div>
+                        }
+                    </div>
+                }
+
+                <!-- Staged Files List -->
+                @if (stagedFiles.Count > 0)
+                {
+                    <div class="bu-staged-section">
+                        <div class="bu-staged-header">
+                            <div>
+                                <strong>@stagedFiles.Count files staged</strong>
+                                <span class="bu-text-muted"> — @FormatFileSize(stagedFiles.Sum(f => f.Metadata.FileSize)) total</span>
+                            </div>
+                            <div style="display:flex;gap:8px;">
+                                <button class="bu-btn danger-outline" @onclick="ClearStagedFiles">
+                                    <i class="bi bi-trash3"></i>Clear All
+                                </button>
+                            </div>
+                        </div>
+                        <div class="bu-staged-list">
+                            @foreach (var entry in stagedFiles)
+                            {
+                                <div class="bu-staged-item @(!entry.Metadata.IsValid ? "invalid" : "")">
+                                    <div class="bu-staged-info">
+                                        <i class="bi @GetFileIcon(entry.File.Name)"></i>
+                                        <span class="bu-staged-name" title="@entry.File.Name">@entry.File.Name</span>
+                                        <span class="bu-staged-size">@FormatFileSize(entry.File.Size)</span>
+                                        <span class="bu-type-chip">@GetFileExtension(entry.File.Name)</span>
+                                    </div>
+                                    @if (!entry.Metadata.IsValid)
+                                    {
+                                        <span class="bu-staged-error">
+                                            <i class="bi bi-exclamation-triangle"></i>@entry.Metadata.ValidationError
+                                        </span>
+                                    }
+                                    <button class="bu-staged-remove" @onclick="() => RemoveStagedFile(entry)"
+                                            title="Remove">
+                                        <i class="bi bi-x-lg"></i>
+                                    </button>
+                                </div>
+                            }
+                        </div>
+                    </div>
+                }
+
+                @if (step1Error != null)
+                {
+                    <div class="bu-alert error" style="margin:12px 16px;">
+                        <i class="bi bi-exclamation-triangle"></i>@step1Error
+                    </div>
+                }
+
+                <!-- Step 1 Actions -->
+                @if (stagedFiles.Count >= 2)
+                {
+                    <div class="bu-card-footer">
+                        <button class="bu-btn primary" @onclick="ProceedToMetadata">
+                            <span>Next: Edit Metadata</span>
+                            <i class="bi bi-arrow-right"></i>
+                        </button>
+                    </div>
+                }
+                else if (stagedFiles.Count == 1)
+                {
+                    <div class="bu-alert info" style="margin:12px 16px;">
+                        <i class="bi bi-info-circle"></i>
+                        Bulk upload requires at least 2 files. Add more files to continue.
+                    </div>
+                }
+            </div>
+        }
+
+        @* ─── STEP 2: Edit Metadata ─── *@
+        @if (currentStep == 2)
+        {
+            <div class="bu-card">
+                <div class="bu-card-header" style="justify-content:space-between;">
+                    <div style="display:flex;align-items:center;gap:8px;">
+                        <i class="bi bi-pencil-square" style="color:var(--accent);"></i>
+                        <strong>Edit Metadata</strong>
+                        <span class="bu-badge">@stagedFiles.Count files</span>
+                    </div>
+                    <div style="display:flex;gap:8px;align-items:center;">
+                        <button class="bu-btn secondary small" @onclick="ApplyToAll"
+                                title="Apply the first file's metadata to all files">
+                            <i class="bi bi-clipboard-check"></i>Apply First to All
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Batch Default Fields -->
+                <div class="bu-batch-defaults">
+                    <div class="bu-batch-label">
+                        <i class="bi bi-lightning"></i> Quick Apply — Set defaults for all files:
+                    </div>
+                    <div class="bu-batch-fields">
+                        <div class="bu-mini-field">
+                            <label>Status</label>
+                            <select class="bu-input small" @bind="batchStatus">
+                                <option value="">—</option>
+                                <option>Draft</option>
+                                <option>Final</option>
+                                <option>Approved</option>
+                                <option>Archived</option>
+                            </select>
+                        </div>
+                        <div class="bu-mini-field">
+                            <label>Classification</label>
+                            <select class="bu-input small" @bind="batchClassification">
+                                <option value="">—</option>
+                                <option>Public</option>
+                                <option>Internal</option>
+                                <option>Confidential</option>
+                                <option>Restricted</option>
+                            </select>
+                        </div>
+                        <div class="bu-mini-field">
+                            <label>Author</label>
+                            <input class="bu-input small" @bind="batchAuthor" placeholder="Author name" />
+                        </div>
+                        <div class="bu-mini-field">
+                            <label>Version</label>
+                            <input class="bu-input small" @bind="batchVersion" placeholder="e.g. 1.0" />
+                        </div>
+                        <button class="bu-btn accent small" @onclick="ApplyBatchDefaults">
+                            <i class="bi bi-check2-all"></i>Apply
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Metadata Table -->
+                <div class="bu-meta-table-wrap">
+                    <table class="bu-meta-table">
+                        <thead>
+                            <tr>
+                                <th class="col-file">File</th>
+                                <th class="col-idx">Doc Index</th>
+                                <th class="col-title">Title</th>
+                                <th class="col-author">Author</th>
+                                <th class="col-status">Status</th>
+                                <th class="col-class">Classification</th>
+                                <th class="col-kw">Keywords</th>
+                                <th class="col-expand"></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @for (int i = 0; i < stagedFiles.Count; i++)
+                            {
+                                var idx = i;
+                                var entry = stagedFiles[idx];
+                                <tr class="@(expandedRow == idx ? "expanded" : "")">
+                                    <td class="col-file">
+                                        <div class="bu-file-cell">
+                                            <i class="bi @GetFileIcon(entry.File.Name)"></i>
+                                            <span title="@entry.File.Name">@TruncateFileName(entry.File.Name, 30)</span>
+                                        </div>
+                                    </td>
+                                    <td><input class="bu-cell-input" @bind="entry.Metadata.DocumentIndex" placeholder="—" /></td>
+                                    <td><input class="bu-cell-input" @bind="entry.Metadata.Title" placeholder="@Path.GetFileNameWithoutExtension(entry.File.Name)" /></td>
+                                    <td><input class="bu-cell-input" @bind="entry.Metadata.Author" placeholder="—" /></td>
+                                    <td>
+                                        <select class="bu-cell-input" @bind="entry.Metadata.Status">
+                                            <option value="">—</option>
+                                            <option>Draft</option>
+                                            <option>Final</option>
+                                            <option>Approved</option>
+                                            <option>Archived</option>
+                                        </select>
+                                    </td>
+                                    <td>
+                                        <select class="bu-cell-input" @bind="entry.Metadata.Classification">
+                                            <option value="">—</option>
+                                            <option>Public</option>
+                                            <option>Internal</option>
+                                            <option>Confidential</option>
+                                            <option>Restricted</option>
+                                        </select>
+                                    </td>
+                                    <td><input class="bu-cell-input" @bind="entry.Metadata.Keywords" placeholder="kw1;kw2" /></td>
+                                    <td>
+                                        <button class="bu-expand-btn" @onclick="() => ToggleExpandRow(idx)"
+                                                title="Show all fields">
+                                            <i class="bi @(expandedRow == idx ? "bi-chevron-up" : "bi-chevron-down")"></i>
+                                        </button>
+                                    </td>
+                                </tr>
+                                @if (expandedRow == idx)
+                                {
+                                    <tr class="bu-expanded-row">
+                                        <td colspan="8">
+                                            <div class="bu-expanded-grid">
+                                                <div class="bu-exp-field">
+                                                    <label>Memo</label>
+                                                    <textarea class="bu-cell-input" rows="2" @bind="entry.Metadata.Memo"></textarea>
+                                                </div>
+                                                <div class="bu-exp-field">
+                                                    <label>Version</label>
+                                                    <input class="bu-cell-input" @bind="entry.Metadata.Version" />
+                                                </div>
+                                                <div class="bu-exp-field">
+                                                    <label>Issue</label>
+                                                    <input class="bu-cell-input" @bind="entry.Metadata.Issue" />
+                                                </div>
+                                                <div class="bu-exp-field">
+                                                    <label>Document Date</label>
+                                                    <input class="bu-cell-input" type="date" @bind="entry.Metadata.DocumentDate" />
+                                                </div>
+                                                @for (int t = 1; t <= 12; t++)
+                                                {
+                                                    var tIdx = t;
+                                                    <div class="bu-exp-field">
+                                                        <label>Text@(tIdx.ToString("00"))</label>
+                                                        <input class="bu-cell-input" value="@GetTextValue(entry.Metadata, tIdx)"
+                                                               @onchange="(e) => SetTextValue(entry.Metadata, tIdx, e.Value?.ToString())" />
+                                                    </div>
+                                                }
+                                                @for (int d = 1; d <= 4; d++)
+                                                {
+                                                    var dIdx = d;
+                                                    <div class="bu-exp-field">
+                                                        <label>Date@(dIdx.ToString("00"))</label>
+                                                        <input class="bu-cell-input" type="date" value="@GetDateValue(entry.Metadata, dIdx)?.ToString("yyyy-MM-dd")"
+                                                               @onchange="(e) => SetDateValue(entry.Metadata, dIdx, e.Value?.ToString())" />
+                                                    </div>
+                                                }
+                                                @for (int b = 1; b <= 3; b++)
+                                                {
+                                                    var bIdx = b;
+                                                    <div class="bu-exp-field">
+                                                        <label>Boolean@(bIdx.ToString("00"))</label>
+                                                        <select class="bu-cell-input" value="@GetBoolValue(entry.Metadata, bIdx)"
+                                                                @onchange="(e) => SetBoolValue(entry.Metadata, bIdx, e.Value?.ToString())">
+                                                            <option value="">—</option>
+                                                            <option value="True">Yes</option>
+                                                            <option value="False">No</option>
+                                                        </select>
+                                                    </div>
+                                                }
+                                                @for (int n = 1; n <= 3; n++)
+                                                {
+                                                    var nIdx = n;
+                                                    <div class="bu-exp-field">
+                                                        <label>Number@(nIdx.ToString("00"))</label>
+                                                        <input class="bu-cell-input" type="number" step="any"
+                                                               value="@GetNumberValue(entry.Metadata, nIdx)"
+                                                               @onchange="(e) => SetNumberValue(entry.Metadata, nIdx, e.Value?.ToString())" />
+                                                    </div>
+                                                }
+                                            </div>
+                                        </td>
+                                    </tr>
+                                }
+                            }
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Step 2 Actions -->
+                <div class="bu-card-footer">
+                    <button class="bu-btn secondary" @onclick="() => currentStep = 1">
+                        <i class="bi bi-arrow-left"></i>Back
+                    </button>
+                    <button class="bu-btn primary" @onclick="ProceedToUpload">
+                        <i class="bi bi-cloud-upload"></i>
+                        <span>Upload @stagedFiles.Count Files</span>
+                    </button>
+                </div>
+            </div>
+        }
+
+        @* ─── STEP 3: Uploading / Results ─── *@
+        @if (currentStep == 3)
+        {
+            <div class="bu-card">
+                <div class="bu-card-header">
+                    <i class="bi @(uploadComplete ? (uploadResult?.FailedCount == 0 ? "bi-check-circle-fill" : "bi-exclamation-triangle-fill") : "bi-cloud-arrow-up")"
+                       style="color:@(uploadComplete ? (uploadResult?.FailedCount == 0 ? "var(--green-bright)" : "var(--gold)") : "var(--accent)");"></i>
+                    <strong>
+                        @if (isUploading)
+                        {
+                            @:Uploading...
+                        }
+                        else if (uploadComplete && uploadResult != null)
+                        {
+                            @if (uploadResult.FailedCount == 0)
+                            {
+                                @:Upload Complete
+                            }
+                            else
+                            {
+                                @:Upload Complete — @uploadResult.FailedCount Failed
+                            }
+                        }
+                    </strong>
+                </div>
+                <div class="bu-card-body">
+                    @if (isUploading)
+                    {
+                        <div class="bu-progress-section">
+                            <div class="bu-progress-bar">
+                                <div class="bu-progress-fill" style="width:@uploadProgressPct%"></div>
+                            </div>
+                            <div class="bu-progress-text">
+                                @uploadProgressPhase — @uploadProgressCurrent of @stagedFiles.Count
+                            </div>
+                        </div>
+                    }
+
+                    @if (uploadComplete && uploadResult != null)
+                    {
+                        <!-- Summary Stats -->
+                        <div class="bu-result-stats">
+                            <div class="bu-stat">
+                                <div class="bu-stat-num">@uploadResult.TotalFiles</div>
+                                <div class="bu-stat-label">Total</div>
+                            </div>
+                            <div class="bu-stat success">
+                                <div class="bu-stat-num">@uploadResult.SuccessCount</div>
+                                <div class="bu-stat-label">Succeeded</div>
+                            </div>
+                            @if (uploadResult.FailedCount > 0)
+                            {
+                                <div class="bu-stat error">
+                                    <div class="bu-stat-num">@uploadResult.FailedCount</div>
+                                    <div class="bu-stat-label">Failed</div>
+                                </div>
+                            }
+                            <div class="bu-stat">
+                                <div class="bu-stat-num">@uploadResult.Duration.TotalSeconds.ToString("F1")s</div>
+                                <div class="bu-stat-label">Duration</div>
+                            </div>
+                        </div>
+
+                        <!-- Per-file results -->
+                        <div class="bu-results-list">
+                            @foreach (var fr in uploadResult.FileResults)
+                            {
+                                <div class="bu-result-item @(fr.Success ? "success" : "error")">
+                                    <i class="bi @(fr.Success ? "bi-check-circle" : "bi-x-circle")"></i>
+                                    <span class="bu-result-name">@fr.FileName</span>
+                                    @if (fr.Success)
+                                    {
+                                        <span class="bu-result-detail">Doc #@fr.DocumentId</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="bu-result-error">@fr.Error</span>
+                                    }
+                                </div>
+                            }
+                        </div>
+                    }
+
+                    @if (uploadError != null)
+                    {
+                        <div class="bu-alert error" style="margin-top:12px;">
+                            <i class="bi bi-exclamation-triangle"></i>@uploadError
+                        </div>
+                    }
+                </div>
+
+                @if (uploadComplete)
+                {
+                    <div class="bu-card-footer">
+                        <button class="bu-btn secondary" @onclick="StartNewBatch">
+                            <i class="bi bi-plus-lg"></i>New Batch
+                        </button>
+                        <a href="/manage" class="bu-btn primary">
+                            <i class="bi bi-arrow-left"></i>Back to Manage
+                        </a>
+                    </div>
+                }
+            </div>
+        }
+    </div>
+}
+
+<style>
+    /* ── Layout ── */
+    .bu-page {
+        padding: 1rem;
+        max-width: 1400px;
+        margin: 0 auto;
+        color: var(--text);
+    }
+
+    .bu-empty {
+        display: flex; flex-direction: column; align-items: center;
+        gap: 8px; color: var(--text-muted); padding: 3rem;
+    }
+    .bu-spinner {
+        width: 36px; height: 36px;
+        border: 3px solid var(--border);
+        border-top-color: var(--accent);
+        border-radius: 50%;
+        animation: bu-spin .8s linear infinite;
+    }
+    .bu-spinner-sm {
+        display: inline-block;
+        width: 14px; height: 14px;
+        border: 2px solid var(--border);
+        border-top-color: currentColor;
+        border-radius: 50%;
+        animation: bu-spin .8s linear infinite;
+    }
+    @@keyframes bu-spin { to { transform: rotate(360deg); } }
+
+    /* ── Header Banner ── */
+    .bu-header {
+        background: linear-gradient(135deg, rgb(5,39,103) 0%, #3a0647 100%);
+        border-radius: 12px;
+        padding: 1.25rem 1.5rem;
+        margin-bottom: 1rem;
+        box-shadow: 0 4px 12px rgba(0,0,0,.25);
+    }
+    .bu-header-inner {
+        display: flex; align-items: center; justify-content: space-between;
+    }
+    .bu-header-left { display: flex; align-items: center; gap: 14px; }
+    .bu-header-icon {
+        width: 48px; height: 48px; border-radius: 12px;
+        background: rgba(255,255,255,.15);
+        display: flex; align-items: center; justify-content: center;
+        font-size: 1.4rem; color: #fff;
+    }
+    .bu-header-title { font-size: 1.25rem; font-weight: 600; color: #fff; }
+    .bu-header-sub { font-size: .82rem; color: rgba(255,255,255,.55); margin-top: 2px; }
+
+    /* ── Step Indicator ── */
+    .bu-steps {
+        display: flex; align-items: center; justify-content: center;
+        gap: 0; margin-bottom: 1.25rem;
+    }
+    .bu-step {
+        display: flex; align-items: center; gap: 6px;
+        font-size: .82rem; color: var(--text-muted);
+        padding: 6px 16px; border-radius: 20px;
+        transition: all .2s;
+    }
+    .bu-step.active {
+        background: var(--accent); color: #fff; font-weight: 600;
+    }
+    .bu-step.done { color: var(--green-bright); }
+    .bu-step-num {
+        width: 22px; height: 22px; border-radius: 50%;
+        display: flex; align-items: center; justify-content: center;
+        font-size: .72rem; font-weight: 700;
+        border: 2px solid var(--border);
+        background: var(--bg-inset);
+    }
+    .bu-step.active .bu-step-num {
+        background: rgba(255,255,255,.2); border-color: transparent; color: #fff;
+    }
+    .bu-step.done .bu-step-num {
+        background: var(--green); border-color: transparent; color: #fff;
+    }
+    .bu-step-line {
+        width: 40px; height: 2px; background: var(--border);
+        margin: 0 4px; transition: background .2s;
+    }
+    .bu-step-line.done { background: var(--green); }
+
+    /* ── Import Mode Tabs ── */
+    .bu-mode-tabs {
+        display: flex; gap: 4px; margin-bottom: 1rem;
+        background: var(--bg-inset); padding: 4px; border-radius: 10px;
+        border: 1px solid var(--border);
+    }
+    .bu-mode-tab {
+        flex: 1; padding: 8px 16px; border-radius: 8px;
+        background: transparent; border: none; color: var(--text-muted);
+        font-size: .85rem; font-weight: 500; cursor: pointer;
+        display: flex; align-items: center; justify-content: center; gap: 6px;
+        transition: all .15s;
+    }
+    .bu-mode-tab:hover { color: var(--text); }
+    .bu-mode-tab.active {
+        background: var(--accent); color: #fff; box-shadow: 0 2px 8px rgba(88,166,255,.25);
+    }
+
+    /* ── Card ── */
+    .bu-card {
+        background: var(--bg-surface);
+        border: 1px solid var(--border);
+        border-radius: 10px; overflow: hidden;
+        margin-bottom: 1rem;
+    }
+    .bu-card-header {
+        display: flex; align-items: center; gap: 8px;
+        padding: .75rem 1.25rem;
+        background: var(--bg-inset);
+        border-bottom: 1px solid var(--border);
+        font-size: .95rem; color: var(--text-bright);
+    }
+    .bu-card-body { padding: 1.25rem; }
+    .bu-card-footer {
+        display: flex; justify-content: space-between; align-items: center;
+        padding: .75rem 1.25rem;
+        border-top: 1px solid var(--border);
+        background: var(--bg-inset);
+    }
+
+    /* ── Buttons ── */
+    .bu-btn {
+        display: inline-flex; align-items: center; gap: 6px;
+        padding: 6px 14px; border-radius: 6px;
+        font-size: .85rem; font-weight: 500;
+        cursor: pointer; border: none; transition: all .15s;
+        text-decoration: none;
+    }
+    .bu-btn.primary { background: var(--accent); color: #fff; }
+    .bu-btn.primary:hover { background: var(--accent-hover); }
+    .bu-btn.primary:disabled { opacity: .5; cursor: not-allowed; }
+    .bu-btn.secondary {
+        background: transparent; color: var(--text-secondary);
+        border: 1px solid var(--border);
+    }
+    .bu-btn.secondary:hover { border-color: var(--text-muted); color: var(--text); }
+    .bu-btn.accent { background: var(--accent); color: #fff; }
+    .bu-btn.accent:hover { background: var(--accent-hover); }
+    .bu-btn.danger-outline {
+        background: transparent; color: var(--red);
+        border: 1px solid var(--red);
+    }
+    .bu-btn.danger-outline:hover { background: rgba(248,81,73,.1); }
+    .bu-btn.small { font-size: .78rem; padding: 4px 10px; }
+    .bu-link-btn {
+        background: none; border: none; color: var(--accent);
+        cursor: pointer; font-size: inherit; text-decoration: underline;
+        padding: 0;
+    }
+
+    /* ── Drop Zone ── */
+    .bu-drop-zone {
+        border: 2px dashed var(--border);
+        border-radius: 10px; padding: 2rem;
+        text-align: center; position: relative;
+        transition: border-color .2s, background .2s;
+        background: var(--bg-inset);
+    }
+    .bu-drop-zone:hover {
+        border-color: var(--accent);
+        background: rgba(88,166,255,.04);
+    }
+    .bu-drop-zone p { color: var(--text-muted); margin: 8px 0 4px; font-size: .9rem; }
+    .bu-file-input {
+        position: absolute; inset: 0; width: 100%; height: 100%;
+        opacity: 0; cursor: pointer;
+    }
+    .bu-file-hint { font-size: .72rem; color: var(--text-muted); }
+
+    /* ── Form ── */
+    .bu-field { margin-bottom: .75rem; }
+    .bu-label {
+        display: block; font-size: .78rem; font-weight: 600;
+        color: var(--text-secondary); margin-bottom: 4px;
+        text-transform: uppercase; letter-spacing: .4px;
+    }
+    .bu-input {
+        width: 100%; padding: 6px 10px;
+        background: var(--bg-input); border: 1px solid var(--border);
+        border-radius: 6px; color: var(--text); font-size: .85rem;
+        outline: none; transition: border-color .15s;
+    }
+    .bu-input:focus { border-color: var(--accent); }
+    .bu-input.small { padding: 4px 8px; font-size: .8rem; }
+    .bu-hint { font-size: .82rem; color: var(--text-muted); margin-bottom: .75rem; }
+    .bu-text-muted { color: var(--text-muted); font-size: .82rem; }
+
+    /* ── Alerts ── */
+    .bu-alert {
+        display: flex; align-items: center; gap: 8px;
+        padding: 8px 12px; border-radius: 6px; font-size: .82rem;
+    }
+    .bu-alert.info {
+        background: rgba(88,166,255,.08);
+        border: 1px solid var(--accent); color: var(--text);
+    }
+    .bu-alert.success {
+        background: rgba(63,185,80,.08);
+        border: 1px solid var(--green); color: var(--green-bright);
+    }
+    .bu-alert.error {
+        background: rgba(248,81,73,.08);
+        border: 1px solid var(--red); color: var(--red);
+    }
+
+    /* ── Badge ── */
+    .bu-badge {
+        font-size: .7rem; padding: 2px 8px; border-radius: 10px;
+        background: rgba(88,166,255,.12); color: var(--accent); font-weight: 600;
+    }
+
+    /* ── Staged Files List ── */
+    .bu-staged-section {
+        border-top: 1px solid var(--border);
+    }
+    .bu-staged-header {
+        display: flex; align-items: center; justify-content: space-between;
+        padding: .75rem 1.25rem; background: var(--bg-inset);
+        font-size: .85rem; color: var(--text-bright);
+    }
+    .bu-staged-list {
+        max-height: 300px; overflow-y: auto;
+    }
+    .bu-staged-item {
+        display: flex; align-items: center; gap: 8px;
+        padding: 6px 1.25rem;
+        border-bottom: 1px solid var(--border-muted);
+        font-size: .82rem;
+        transition: background .1s;
+    }
+    .bu-staged-item:hover { background: rgba(88,166,255,.03); }
+    .bu-staged-item.invalid { background: rgba(248,81,73,.04); }
+    .bu-staged-info {
+        display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0;
+    }
+    .bu-staged-name {
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        color: var(--text); max-width: 350px;
+    }
+    .bu-staged-size { color: var(--text-muted); font-size: .75rem; white-space: nowrap; }
+    .bu-type-chip {
+        font-size: .68rem; padding: 1px 6px; border-radius: 3px;
+        background: var(--bg-input); color: var(--text-muted);
+        border: 1px solid var(--border-muted); text-transform: uppercase;
+    }
+    .bu-staged-error {
+        color: var(--red); font-size: .75rem;
+        display: flex; align-items: center; gap: 4px;
+    }
+    .bu-staged-remove {
+        background: none; border: none; color: var(--text-muted);
+        cursor: pointer; padding: 2px 4px; border-radius: 4px;
+        transition: color .15s;
+    }
+    .bu-staged-remove:hover { color: var(--red); }
+
+    /* ── Batch Defaults Bar ── */
+    .bu-batch-defaults {
+        padding: 10px 1.25rem;
+        background: rgba(88,166,255,.04);
+        border-bottom: 1px solid var(--border);
+    }
+    .bu-batch-label {
+        font-size: .75rem; font-weight: 600; color: var(--accent);
+        margin-bottom: 6px; display: flex; align-items: center; gap: 4px;
+    }
+    .bu-batch-fields {
+        display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap;
+    }
+    .bu-mini-field { display: flex; flex-direction: column; gap: 2px; }
+    .bu-mini-field label {
+        font-size: .68rem; color: var(--text-muted); text-transform: uppercase;
+        letter-spacing: .3px;
+    }
+
+    /* ── Metadata Table ── */
+    .bu-meta-table-wrap {
+        overflow-x: auto; max-height: 500px; overflow-y: auto;
+    }
+    .bu-meta-table {
+        width: 100%; border-collapse: collapse; font-size: .82rem;
+    }
+    .bu-meta-table thead { position: sticky; top: 0; z-index: 2; }
+    .bu-meta-table th {
+        padding: 8px 10px; background: var(--bg-inset);
+        color: var(--text-muted); font-size: .7rem; font-weight: 600;
+        text-transform: uppercase; letter-spacing: .4px;
+        border-bottom: 1px solid var(--border); text-align: left;
+        white-space: nowrap;
+    }
+    .bu-meta-table td {
+        padding: 4px 6px; border-bottom: 1px solid var(--border-muted);
+    }
+    .bu-meta-table tbody tr:hover { background: rgba(88,166,255,.03); }
+    .bu-meta-table tbody tr.expanded { background: rgba(88,166,255,.06); }
+
+    .col-file { min-width: 200px; max-width: 280px; }
+    .col-idx { width: 120px; }
+    .col-title { min-width: 160px; }
+    .col-author { width: 120px; }
+    .col-status { width: 100px; }
+    .col-class { width: 110px; }
+    .col-kw { min-width: 140px; }
+    .col-expand { width: 36px; }
+
+    .bu-file-cell {
+        display: flex; align-items: center; gap: 6px;
+        font-size: .8rem; color: var(--text);
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .bu-cell-input {
+        width: 100%; padding: 3px 6px;
+        background: transparent; border: 1px solid transparent;
+        border-radius: 4px; color: var(--text); font-size: .8rem;
+        outline: none; transition: border-color .15s;
+    }
+    .bu-cell-input:hover { border-color: var(--border); }
+    .bu-cell-input:focus {
+        border-color: var(--accent);
+        background: var(--bg-input);
+    }
+    textarea.bu-cell-input { resize: vertical; }
+
+    .bu-expand-btn {
+        background: none; border: none; color: var(--text-muted);
+        cursor: pointer; padding: 4px; border-radius: 4px;
+    }
+    .bu-expand-btn:hover { color: var(--accent); }
+
+    /* ── Expanded Row ── */
+    .bu-expanded-row td {
+        padding: 12px 16px; background: var(--bg-inset);
+        border-bottom: 2px solid var(--border);
+    }
+    .bu-expanded-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+        gap: 8px;
+    }
+    .bu-exp-field label {
+        display: block; font-size: .68rem; color: var(--text-muted);
+        text-transform: uppercase; letter-spacing: .3px; margin-bottom: 2px;
+    }
+
+    /* ── Progress Bar ── */
+    .bu-progress-section { text-align: center; padding: 1rem 0; }
+    .bu-progress-bar {
+        width: 100%; height: 8px; border-radius: 4px;
+        background: var(--bg-inset); overflow: hidden;
+        margin-bottom: 8px;
+    }
+    .bu-progress-fill {
+        height: 100%; border-radius: 4px;
+        background: linear-gradient(90deg, var(--accent), var(--green));
+        transition: width .3s ease;
+    }
+    .bu-progress-text { font-size: .82rem; color: var(--text-muted); }
+
+    /* ── Result Stats ── */
+    .bu-result-stats {
+        display: flex; gap: 16px; justify-content: center;
+        margin: 1rem 0;
+    }
+    .bu-stat {
+        text-align: center; padding: 12px 20px;
+        border-radius: 8px; background: var(--bg-inset);
+        border: 1px solid var(--border); min-width: 80px;
+    }
+    .bu-stat.success { border-color: var(--green); }
+    .bu-stat.error { border-color: var(--red); }
+    .bu-stat-num {
+        font-size: 1.5rem; font-weight: 700; color: var(--text-bright);
+    }
+    .bu-stat.success .bu-stat-num { color: var(--green-bright); }
+    .bu-stat.error .bu-stat-num { color: var(--red); }
+    .bu-stat-label { font-size: .72rem; color: var(--text-muted); text-transform: uppercase; }
+
+    /* ── Results List ── */
+    .bu-results-list {
+        max-height: 350px; overflow-y: auto;
+        border: 1px solid var(--border); border-radius: 8px;
+    }
+    .bu-result-item {
+        display: flex; align-items: center; gap: 8px;
+        padding: 8px 14px; border-bottom: 1px solid var(--border-muted);
+        font-size: .82rem;
+    }
+    .bu-result-item.success i { color: var(--green-bright); }
+    .bu-result-item.error i { color: var(--red); }
+    .bu-result-name { flex: 1; color: var(--text); }
+    .bu-result-detail { color: var(--text-muted); font-size: .75rem; font-family: monospace; }
+    .bu-result-error { color: var(--red); font-size: .75rem; }
+</style>
+
+@code {
+    // ── Enums ──
+    private enum ImportMode { Files, Zip, Csv }
+
+    // ── Access Control ──
+    private bool isLoading = true;
+    private bool hasAccess = false;
+    private string accessDeniedMessage = "You do not have edit access to the selected project.";
+    private string? currentUsername;
+
+    // ── Wizard State ──
+    private int currentStep = 1;
+    private ImportMode importMode = ImportMode.Files;
+
+    // ── Staged Files ──
+    private readonly List<BulkUploadFileEntry> stagedFiles = new();
+    private string? step1Error;
+    private ElementReference dropZoneRef;
+
+    // ── ZIP ──
+    private bool isExtractingZip = false;
+
+    // ── CSV ──
+    private int csvParsedCount = 0;
+    private string? csvParseMessage;
+    private bool csvParseSuccess;
+    private readonly List<BulkUploadFileMetadata> csvMetadataEntries = new();
+
+    // ── Metadata (Step 2) ──
+    private int? expandedRow;
+    private string? batchStatus;
+    private string? batchClassification;
+    private string? batchAuthor;
+    private string? batchVersion;
+
+    // ── Upload (Step 3) ──
+    private bool isUploading = false;
+    private bool uploadComplete = false;
+    private BulkUploadResult? uploadResult;
+    private string? uploadError;
+    private int uploadProgressPct = 0;
+    private string uploadProgressPhase = "";
+    private int uploadProgressCurrent = 0;
+
+    // ── Allowed extensions ──
+    private static readonly HashSet<string> AllowedExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".pdf", ".tiff", ".tif", ".jpg", ".jpeg", ".png", ".bmp", ".gif"
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        ProjectSelectionState.OnChange += OnProjectChanged;
+        await VerifyAccess();
+    }
+
+    private async Task VerifyAccess()
+    {
+        isLoading = true;
+        hasAccess = false;
+
+        try
+        {
+            if (!ProjectSelectionState.SelectedProjectId.HasValue)
+            {
+                accessDeniedMessage = "No project selected. Please select a project from Browse, then navigate to Manage > Bulk Upload.";
+                isLoading = false;
+                return;
+            }
+
+            var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+            var user = authState.User;
+            currentUsername = user.Identity?.Name;
+
+            if (string.IsNullOrEmpty(currentUsername))
+            {
+                accessDeniedMessage = "User not authenticated.";
+                isLoading = false;
+                return;
+            }
+
+            var projectId = ProjectSelectionState.SelectedProjectId.Value;
+            var canEdit = await Repo.HasProjectEditAccessAsync(user, projectId);
+
+            if (!canEdit)
+            {
+                accessDeniedMessage = $"You do not have edit access to project '{ProjectSelectionState.SelectedProjectName}'.";
+                await AuditService.LogProjectAccessAsync(
+                    currentUsername, 0, projectId, "PROJECT_ACCESS_DENIED", "DENIED",
+                    $"Edit access denied to Bulk Upload page");
+                isLoading = false;
+                return;
+            }
+
+            hasAccess = true;
+            await AuditService.LogProjectAccessAsync(
+                currentUsername, 0, projectId, "ACCESS_PROJECT", "SUCCESS",
+                $"Bulk Upload page opened for project '{ProjectSelectionState.SelectedProjectName}'");
+        }
+        catch (Exception ex)
+        {
+            accessDeniedMessage = $"Error verifying access: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    // ── Import Mode ──
+    private void SetImportMode(ImportMode mode)
+    {
+        importMode = mode;
+        step1Error = null;
+    }
+
+    // ── Multi-File Selection ──
+    private void OnMultipleFilesSelected(InputFileChangeEventArgs e)
+    {
+        step1Error = null;
+        var files = e.GetMultipleFiles(maximumFileCount: 100);
+
+        foreach (var file in files)
+        {
+            var ext = Path.GetExtension(file.Name);
+            if (!AllowedExtensions.Contains(ext))
+            {
+                step1Error = $"File '{file.Name}' has unsupported extension '{ext}'.";
+                continue;
+            }
+
+            if (stagedFiles.Any(f => f.File.Name == file.Name))
+                continue; // skip duplicates
+
+            var clientId = Guid.NewGuid().ToString("N")[..12];
+            stagedFiles.Add(new BulkUploadFileEntry
+            {
+                File = file,
+                Metadata = new BulkUploadFileMetadata
+                {
+                    ClientFileId = clientId,
+                    FileName = file.Name,
+                    FileSize = file.Size,
+                    ContentType = file.ContentType,
+                    Title = Path.GetFileNameWithoutExtension(file.Name),
+                    Status = "Draft"
+                }
+            });
+        }
+
+        if (stagedFiles.Count > 100)
+        {
+            step1Error = "Maximum 100 files per batch. Remove some files.";
+            stagedFiles.RemoveRange(100, stagedFiles.Count - 100);
+        }
+
+        var totalSize = stagedFiles.Sum(f => f.Metadata.FileSize);
+        if (totalSize > 500 * 1024 * 1024)
+        {
+            step1Error = $"Total size ({FormatFileSize(totalSize)}) exceeds 500 MB limit.";
+        }
+    }
+
+    // ── ZIP Selection ──
+    private async Task OnZipFileSelected(InputFileChangeEventArgs e)
+    {
+        step1Error = null;
+        var zipFile = e.File;
+
+        if (zipFile.Size > 500 * 1024 * 1024)
+        {
+            step1Error = "ZIP file exceeds 500 MB limit.";
+            return;
+        }
+
+        isExtractingZip = true;
+        StateHasChanged();
+
+        try
+        {
+            using var stream = zipFile.OpenReadStream(maxAllowedSize: 500 * 1024 * 1024);
+            using var ms = new MemoryStream();
+            await stream.CopyToAsync(ms);
+            ms.Position = 0;
+
+            using var archive = new ZipArchive(ms, ZipArchiveMode.Read);
+            var validEntries = archive.Entries
+                .Where(entry => !string.IsNullOrEmpty(entry.Name) &&
+                                !entry.FullName.Contains("__MACOSX") &&
+                                AllowedExtensions.Contains(Path.GetExtension(entry.Name)))
+                .ToList();
+
+            if (validEntries.Count < 2)
+            {
+                step1Error = "ZIP must contain at least 2 supported document files.";
+                return;
+            }
+
+            stagedFiles.Clear();
+            foreach (var entry in validEntries.Take(100))
+            {
+                using var entryStream = entry.Open();
+                using var entryMs = new MemoryStream();
+                await entryStream.CopyToAsync(entryMs);
+                entryMs.Position = 0;
+
+                var clientId = Guid.NewGuid().ToString("N")[..12];
+                var browserFile = new ZipEntryBrowserFile(entry.Name, entryMs.ToArray(), entry.Length);
+
+                stagedFiles.Add(new BulkUploadFileEntry
+                {
+                    File = browserFile,
+                    Metadata = new BulkUploadFileMetadata
+                    {
+                        ClientFileId = clientId,
+                        FileName = entry.Name,
+                        FileSize = entry.Length,
+                        ContentType = GetMimeType(entry.Name),
+                        Title = Path.GetFileNameWithoutExtension(entry.Name),
+                        Status = "Draft"
+                    }
+                });
+            }
+        }
+        catch (InvalidDataException)
+        {
+            step1Error = "Invalid or corrupt ZIP file.";
+        }
+        catch (Exception ex)
+        {
+            step1Error = $"Error extracting ZIP: {ex.Message}";
+        }
+        finally
+        {
+            isExtractingZip = false;
+        }
+    }
+
+    // ── CSV Selection ──
+    private async Task OnCsvFileSelected(InputFileChangeEventArgs e)
+    {
+        csvParseMessage = null;
+        csvParsedCount = 0;
+        csvMetadataEntries.Clear();
+
+        try
+        {
+            using var reader = new StreamReader(e.File.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024));
+            var headerLine = await reader.ReadLineAsync();
+            if (string.IsNullOrWhiteSpace(headerLine))
+            {
+                csvParseMessage = "CSV file is empty.";
+                csvParseSuccess = false;
+                return;
+            }
+
+            var headers = ParseCsvLine(headerLine);
+            var fileNameIdx = Array.FindIndex(headers, h => h.Equals("FileName", StringComparison.OrdinalIgnoreCase));
+            if (fileNameIdx < 0)
+            {
+                csvParseMessage = "CSV must contain a 'FileName' column.";
+                csvParseSuccess = false;
+                return;
+            }
+
+            int lineNum = 1;
+            while (!reader.EndOfStream && lineNum <= 100)
+            {
+                var line = await reader.ReadLineAsync();
+                if (string.IsNullOrWhiteSpace(line)) continue;
+                lineNum++;
+
+                var values = ParseCsvLine(line);
+                var meta = new BulkUploadFileMetadata
+                {
+                    ClientFileId = Guid.NewGuid().ToString("N")[..12],
+                    FileName = GetCsvValue(values, fileNameIdx),
+                    Status = "Draft"
+                };
+
+                // Map each known column
+                for (int i = 0; i < headers.Length; i++)
+                {
+                    if (i >= values.Length) break;
+                    var val = values[i].Trim();
+                    if (string.IsNullOrEmpty(val)) continue;
+
+                    switch (headers[i].Trim().ToLowerInvariant())
+                    {
+                        case "documentindex": meta.DocumentIndex = val; break;
+                        case "title": meta.Title = val; break;
+                        case "author": meta.Author = val; break;
+                        case "documentdate":
+                            if (DateTime.TryParse(val, out var dd)) meta.DocumentDate = dd;
+                            break;
+                        case "keywords": meta.Keywords = val; break;
+                        case "memo": meta.Memo = val; break;
+                        case "status": meta.Status = val; break;
+                        case "classification": meta.Classification = val; break;
+                        case "version": meta.Version = val; break;
+                        case "issue": meta.Issue = val; break;
+                        case "text01": meta.Text01 = val; break;
+                        case "text02": meta.Text02 = val; break;
+                        case "text03": meta.Text03 = val; break;
+                        case "text04": meta.Text04 = val; break;
+                        case "text05": meta.Text05 = val; break;
+                        case "text06": meta.Text06 = val; break;
+                        case "text07": meta.Text07 = val; break;
+                        case "text08": meta.Text08 = val; break;
+                        case "text09": meta.Text09 = val; break;
+                        case "text10": meta.Text10 = val; break;
+                        case "text11": meta.Text11 = val; break;
+                        case "text12": meta.Text12 = val; break;
+                        case "date01":
+                            if (DateTime.TryParse(val, out var d1)) meta.Date01 = d1; break;
+                        case "date02":
+                            if (DateTime.TryParse(val, out var d2)) meta.Date02 = d2; break;
+                        case "date03":
+                            if (DateTime.TryParse(val, out var d3)) meta.Date03 = d3; break;
+                        case "date04":
+                            if (DateTime.TryParse(val, out var d4)) meta.Date04 = d4; break;
+                        case "boolean01":
+                            if (bool.TryParse(val, out var b1)) meta.Boolean01 = b1; break;
+                        case "boolean02":
+                            if (bool.TryParse(val, out var b2)) meta.Boolean02 = b2; break;
+                        case "boolean03":
+                            if (bool.TryParse(val, out var b3)) meta.Boolean03 = b3; break;
+                        case "number01":
+                            if (double.TryParse(val, out var n1)) meta.Number01 = n1; break;
+                        case "number02":
+                            if (double.TryParse(val, out var n2)) meta.Number02 = n2; break;
+                        case "number03":
+                            if (double.TryParse(val, out var n3)) meta.Number03 = n3; break;
+                    }
+                }
+
+                if (!string.IsNullOrEmpty(meta.FileName))
+                {
+                    if (string.IsNullOrEmpty(meta.Title))
+                        meta.Title = Path.GetFileNameWithoutExtension(meta.FileName);
+                    csvMetadataEntries.Add(meta);
+                }
+            }
+
+            csvParsedCount = csvMetadataEntries.Count;
+            if (csvParsedCount < 2)
+            {
+                csvParseMessage = "CSV must contain at least 2 file entries.";
+                csvParseSuccess = false;
+            }
+            else
+            {
+                csvParseMessage = $"Parsed {csvParsedCount} entries. Now upload the matching files.";
+                csvParseSuccess = true;
+            }
+        }
+        catch (Exception ex)
+        {
+            csvParseMessage = $"CSV parse error: {ex.Message}";
+            csvParseSuccess = false;
+        }
+    }
+
+    private void OnCsvMatchingFilesSelected(InputFileChangeEventArgs e)
+    {
+        step1Error = null;
+        var files = e.GetMultipleFiles(maximumFileCount: 100);
+        stagedFiles.Clear();
+
+        int matched = 0;
+        foreach (var file in files)
+        {
+            var csvEntry = csvMetadataEntries.FirstOrDefault(
+                m => m.FileName.Equals(file.Name, StringComparison.OrdinalIgnoreCase));
+
+            if (csvEntry != null)
+            {
+                csvEntry.FileSize = file.Size;
+                csvEntry.ContentType = file.ContentType;
+                stagedFiles.Add(new BulkUploadFileEntry
+                {
+                    File = file,
+                    Metadata = csvEntry
+                });
+                matched++;
+            }
+            else
+            {
+                // File not in CSV — add with default metadata
+                var clientId = Guid.NewGuid().ToString("N")[..12];
+                stagedFiles.Add(new BulkUploadFileEntry
+                {
+                    File = file,
+                    Metadata = new BulkUploadFileMetadata
+                    {
+                        ClientFileId = clientId,
+                        FileName = file.Name,
+                        FileSize = file.Size,
+                        ContentType = file.ContentType,
+                        Title = Path.GetFileNameWithoutExtension(file.Name),
+                        Status = "Draft",
+                        ValidationError = "Not found in CSV manifest — using defaults",
+                        IsValid = true
+                    }
+                });
+            }
+        }
+
+        var unmatched = csvMetadataEntries.Where(
+            m => !stagedFiles.Any(f => f.File.Name.Equals(m.FileName, StringComparison.OrdinalIgnoreCase))).ToList();
+
+        if (unmatched.Count > 0)
+        {
+            step1Error = $"{unmatched.Count} CSV entries have no matching file: {string.Join(", ", unmatched.Take(5).Select(u => u.FileName))}";
+        }
+    }
+
+    // ── Stage Management ──
+    private void RemoveStagedFile(BulkUploadFileEntry entry)
+    {
+        stagedFiles.Remove(entry);
+    }
+
+    private void ClearStagedFiles()
+    {
+        stagedFiles.Clear();
+        step1Error = null;
+    }
+
+    // ── Step Navigation ──
+    private void ProceedToMetadata()
+    {
+        if (stagedFiles.Count < 2)
+        {
+            step1Error = "At least 2 files are required.";
+            return;
+        }
+
+        step1Error = null;
+        currentStep = 2;
+        expandedRow = null;
+    }
+
+    private async Task ProceedToUpload()
+    {
+        if (!ProjectSelectionState.SelectedProjectId.HasValue ||
+            string.IsNullOrEmpty(ProjectSelectionState.SelectedSchemaName))
+            return;
+
+        currentStep = 3;
+        isUploading = true;
+        uploadComplete = false;
+        uploadResult = null;
+        uploadError = null;
+        uploadProgressPct = 0;
+        StateHasChanged();
+
+        try
+        {
+            var progress = new Progress<BulkUploadProgress>(p =>
+            {
+                uploadProgressPhase = p.Phase;
+                uploadProgressCurrent = p.CurrentIndex;
+                if (p.TotalFiles > 0)
+                    uploadProgressPct = (int)((double)p.CurrentIndex / p.TotalFiles * 100);
+                InvokeAsync(StateHasChanged);
+            });
+
+            uploadResult = await BulkUploadApi.UploadBatchAsync(
+                ProjectSelectionState.SelectedSchemaName,
+                ProjectSelectionState.SelectedProjectId.Value,
+                stagedFiles,
+                progress);
+
+            if (uploadResult != null)
+            {
+                await AuditService.LogSecurityEventAsync(
+                    currentUsername ?? "Unknown", null,
+                    "BULK_UPLOAD",
+                    $"Bulk uploaded {uploadResult.SuccessCount}/{uploadResult.TotalFiles} files to project '{ProjectSelectionState.SelectedProjectName}'",
+                    ProjectSelectionState.SelectedProjectId);
+            }
+        }
+        catch (Exception ex)
+        {
+            uploadError = $"Upload failed: {ex.Message}";
+        }
+        finally
+        {
+            isUploading = false;
+            uploadComplete = true;
+            uploadProgressPct = 100;
+            StateHasChanged();
+        }
+    }
+
+    private void StartNewBatch()
+    {
+        stagedFiles.Clear();
+        csvMetadataEntries.Clear();
+        currentStep = 1;
+        uploadResult = null;
+        uploadError = null;
+        uploadComplete = false;
+        csvParsedCount = 0;
+        csvParseMessage = null;
+        step1Error = null;
+        expandedRow = null;
+    }
+
+    // ── Batch Defaults ──
+    private void ApplyBatchDefaults()
+    {
+        foreach (var entry in stagedFiles)
+        {
+            if (!string.IsNullOrEmpty(batchStatus)) entry.Metadata.Status = batchStatus;
+            if (!string.IsNullOrEmpty(batchClassification)) entry.Metadata.Classification = batchClassification;
+            if (!string.IsNullOrEmpty(batchAuthor)) entry.Metadata.Author = batchAuthor;
+            if (!string.IsNullOrEmpty(batchVersion)) entry.Metadata.Version = batchVersion;
+        }
+    }
+
+    private void ApplyToAll()
+    {
+        if (stagedFiles.Count < 2) return;
+        var src = stagedFiles[0].Metadata;
+        foreach (var entry in stagedFiles.Skip(1))
+        {
+            var m = entry.Metadata;
+            m.DocumentIndex = src.DocumentIndex;
+            m.Author = src.Author;
+            m.Status = src.Status;
+            m.Classification = src.Classification;
+            m.Keywords = src.Keywords;
+            m.Version = src.Version;
+            m.Issue = src.Issue;
+            m.Memo = src.Memo;
+            m.DocumentDate = src.DocumentDate;
+            // copy custom fields
+            m.Text01 = src.Text01; m.Text02 = src.Text02; m.Text03 = src.Text03;
+            m.Text04 = src.Text04; m.Text05 = src.Text05; m.Text06 = src.Text06;
+            m.Text07 = src.Text07; m.Text08 = src.Text08; m.Text09 = src.Text09;
+            m.Text10 = src.Text10; m.Text11 = src.Text11; m.Text12 = src.Text12;
+            m.Date01 = src.Date01; m.Date02 = src.Date02; m.Date03 = src.Date03; m.Date04 = src.Date04;
+            m.Boolean01 = src.Boolean01; m.Boolean02 = src.Boolean02; m.Boolean03 = src.Boolean03;
+            m.Number01 = src.Number01; m.Number02 = src.Number02; m.Number03 = src.Number03;
+        }
+    }
+
+    private void ToggleExpandRow(int idx)
+    {
+        expandedRow = expandedRow == idx ? null : idx;
+    }
+
+    // ── CSV Template Download ──
+    private async Task DownloadCsvTemplate()
+    {
+        var templateBytes = await BulkUploadApi.DownloadCsvTemplateAsync();
+        if (templateBytes != null)
+        {
+            var base64 = Convert.ToBase64String(templateBytes);
+            await JS.InvokeVoidAsync("downloadFileFromBase64", "BulkUpload_Template.csv", base64, "text/csv");
+        }
+    }
+
+    // ── Metadata Property Accessors ──
+    private string? GetTextValue(BulkUploadFileMetadata m, int idx) => idx switch
+    {
+        1 => m.Text01, 2 => m.Text02, 3 => m.Text03, 4 => m.Text04,
+        5 => m.Text05, 6 => m.Text06, 7 => m.Text07, 8 => m.Text08,
+        9 => m.Text09, 10 => m.Text10, 11 => m.Text11, 12 => m.Text12,
+        _ => null
+    };
+
+    private void SetTextValue(BulkUploadFileMetadata m, int idx, string? val)
+    {
+        switch (idx)
+        {
+            case 1: m.Text01 = val; break; case 2: m.Text02 = val; break;
+            case 3: m.Text03 = val; break; case 4: m.Text04 = val; break;
+            case 5: m.Text05 = val; break; case 6: m.Text06 = val; break;
+            case 7: m.Text07 = val; break; case 8: m.Text08 = val; break;
+            case 9: m.Text09 = val; break; case 10: m.Text10 = val; break;
+            case 11: m.Text11 = val; break; case 12: m.Text12 = val; break;
+        }
+    }
+
+    private DateTime? GetDateValue(BulkUploadFileMetadata m, int idx) => idx switch
+    {
+        1 => m.Date01, 2 => m.Date02, 3 => m.Date03, 4 => m.Date04, _ => null
+    };
+
+    private void SetDateValue(BulkUploadFileMetadata m, int idx, string? val)
+    {
+        DateTime? parsed = DateTime.TryParse(val, out var d) ? d : null;
+        switch (idx)
+        {
+            case 1: m.Date01 = parsed; break; case 2: m.Date02 = parsed; break;
+            case 3: m.Date03 = parsed; break; case 4: m.Date04 = parsed; break;
+        }
+    }
+
+    private string? GetBoolValue(BulkUploadFileMetadata m, int idx) => idx switch
+    {
+        1 => m.Boolean01?.ToString(), 2 => m.Boolean02?.ToString(), 3 => m.Boolean03?.ToString(), _ => null
+    };
+
+    private void SetBoolValue(BulkUploadFileMetadata m, int idx, string? val)
+    {
+        bool? parsed = bool.TryParse(val, out var b) ? b : null;
+        switch (idx)
+        {
+            case 1: m.Boolean01 = parsed; break; case 2: m.Boolean02 = parsed; break;
+            case 3: m.Boolean03 = parsed; break;
+        }
+    }
+
+    private double? GetNumberValue(BulkUploadFileMetadata m, int idx) => idx switch
+    {
+        1 => m.Number01, 2 => m.Number02, 3 => m.Number03, _ => null
+    };
+
+    private void SetNumberValue(BulkUploadFileMetadata m, int idx, string? val)
+    {
+        double? parsed = double.TryParse(val, out var n) ? n : null;
+        switch (idx)
+        {
+            case 1: m.Number01 = parsed; break; case 2: m.Number02 = parsed; break;
+            case 3: m.Number03 = parsed; break;
+        }
+    }
+
+    // ── Helpers ──
+    private static string FormatFileSize(long bytes)
+    {
+        if (bytes >= 1048576) return (bytes / 1048576.0).ToString("F1") + " MB";
+        if (bytes >= 1024) return (bytes / 1024.0).ToString("F1") + " KB";
+        return bytes + " B";
+    }
+
+    private static string GetFileIcon(string fileName)
+    {
+        var ext = Path.GetExtension(fileName).ToLowerInvariant();
+        return ext switch
+        {
+            ".pdf" => "bi-file-pdf",
+            ".tiff" or ".tif" => "bi-file-image",
+            ".jpg" or ".jpeg" => "bi-file-image",
+            ".png" => "bi-file-image",
+            ".bmp" or ".gif" => "bi-file-image",
+            _ => "bi-file-earmark"
+        };
+    }
+
+    private static string GetFileExtension(string fileName) =>
+        Path.GetExtension(fileName).TrimStart('.').ToUpperInvariant();
+
+    private static string TruncateFileName(string name, int max) =>
+        name.Length <= max ? name : name[..(max - 3)] + "...";
+
+    private static string GetMimeType(string fileName) => Path.GetExtension(fileName).ToLowerInvariant() switch
+    {
+        ".pdf" => "application/pdf",
+        ".tiff" or ".tif" => "image/tiff",
+        ".jpg" or ".jpeg" => "image/jpeg",
+        ".png" => "image/png",
+        ".bmp" => "image/bmp",
+        ".gif" => "image/gif",
+        _ => "application/octet-stream"
+    };
+
+    private static string[] ParseCsvLine(string line)
+    {
+        var fields = new List<string>();
+        bool inQuotes = false;
+        var current = new StringBuilder();
+
+        for (int i = 0; i < line.Length; i++)
+        {
+            char c = line[i];
+            if (c == '"')
+            {
+                if (inQuotes && i + 1 < line.Length && line[i + 1] == '"')
+                {
+                    current.Append('"');
+                    i++;
+                }
+                else
+                {
+                    inQuotes = !inQuotes;
+                }
+            }
+            else if (c == ',' && !inQuotes)
+            {
+                fields.Add(current.ToString());
+                current.Clear();
+            }
+            else
+            {
+                current.Append(c);
+            }
+        }
+        fields.Add(current.ToString());
+        return fields.ToArray();
+    }
+
+    private static string GetCsvValue(string[] values, int index) =>
+        index >= 0 && index < values.Length ? values[index].Trim() : string.Empty;
+
+    private async void OnProjectChanged()
+    {
+        await InvokeAsync(async () =>
+        {
+            StartNewBatch();
+            await VerifyAccess();
+            StateHasChanged();
+        });
+    }
+
+    public void Dispose()
+    {
+        ProjectSelectionState.OnChange -= OnProjectChanged;
+    }
+
+    /// <summary>
+    /// In-memory IBrowserFile wrapper for files extracted from a ZIP archive.
+    /// </summary>
+    private sealed class ZipEntryBrowserFile : IBrowserFile
+    {
+        private readonly byte[] _data;
+
+        public ZipEntryBrowserFile(string name, byte[] data, long size)
+        {
+            Name = name;
+            _data = data;
+            Size = size;
+            ContentType = name.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase) ? "application/pdf"
+                : name.EndsWith(".tiff", StringComparison.OrdinalIgnoreCase) || name.EndsWith(".tif", StringComparison.OrdinalIgnoreCase) ? "image/tiff"
+                : name.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase) || name.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase) ? "image/jpeg"
+                : name.EndsWith(".png", StringComparison.OrdinalIgnoreCase) ? "image/png"
+                : name.EndsWith(".bmp", StringComparison.OrdinalIgnoreCase) ? "image/bmp"
+                : name.EndsWith(".gif", StringComparison.OrdinalIgnoreCase) ? "image/gif"
+                : "application/octet-stream";
+        }
+
+        public string Name { get; }
+        public DateTimeOffset LastModified { get; } = DateTimeOffset.UtcNow;
+        public long Size { get; }
+        public string ContentType { get; }
+
+        public Stream OpenReadStream(long maxAllowedSize = 512000, CancellationToken cancellationToken = default)
+        {
+            return new MemoryStream(_data);
+        }
+    }
+}

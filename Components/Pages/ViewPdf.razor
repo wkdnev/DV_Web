@@ -18,13 +18,14 @@
    - Bootstrap 5.x for styling.
 *@
 
-@page "/viewpdf/{DocumentId:int}"
-@page "/viewpdf/{Schema}/{DocumentId:int}"
+@page "/viewpdf/{Token}"
+@page "/viewpdf/{Schema}/{Token}"
 @* Defines the route for this page with schema and document ID parameters *@
 
 @using DV.Shared.Models
 @using DV.Web.Services
 @using DV.Shared.Security
+@using DV.Shared.Constants
 @using DV.Web.Components.Layout
 @using DV.Web.Components.Documents
 @using Microsoft.AspNetCore.Authorization
@@ -83,28 +84,19 @@
         @* =================================================================
           Document Display
           =================================================================
-          Purpose: Displays the PDF document in an iframe or shows BLOB viewer.
+          Purpose: Displays the PDF document using PDF.js via BlobDocumentViewer.
         *@
-        <div class="card-body p-0">
-            <div style="height: calc(100vh - 200px);">
                 @if (doc.DocumentType!.Equals("PDF", StringComparison.OrdinalIgnoreCase))
                 {
-                    @* Check if this document uses BLOB storage *@
-                    @if (pages != null && pages.Any() && pages.First().UsesBlobStorage)
+                    @if (pages != null && pages.Any() && pages.First().StorageType == 1)
                     {
-                        @* Use BLOB-based viewer for BLOB documents *@
-                        <BlobDocumentViewer DocumentId="@DocumentId" />
+                        @* BLOB storage - viewer fetches from /api/DocumentBlob/page/{pageId} *@
+                        <BlobDocumentViewer DocumentId="@doc.DocumentId" SchemaName="@doc.SchemaName" />
                     }
                     else
                     {
-                        @* Use traditional iframe for file-based PDFs *@
-                        <iframe src="@(string.IsNullOrEmpty(Schema) ? $"/api/pdf-view/{DocumentId}" : $"/api/pdf-view/{Schema}/{DocumentId}")" 
-                                width="100%" 
-                                height="100%" 
-                                frameborder="0">
-                            Your browser does not support PDFs. 
-                            <a href="@(string.IsNullOrEmpty(Schema) ? $"/api/pdf-view/{DocumentId}" : $"/api/pdf-view/{Schema}/{DocumentId}")" target="_blank">Download the PDF</a>
-                        </iframe>
+                        @* File-system storage - pass the legacy PDF URL to the viewer *@
+                        <BlobDocumentViewer DocumentId="@doc.DocumentId" SchemaName="@doc.SchemaName" PdfUrl="@($"/api/pdf-view/{doc.DocumentId}")" />
                     }
                 }
                 else
@@ -115,8 +107,6 @@
                         <p class="mb-0">This document is not a PDF and cannot be displayed in the PDF viewer.</p>
                     </div>
                 }
-            </div>
-        </div>
     }
 </LayoutSelector>
 
@@ -124,7 +114,7 @@
    Code-Behind Logic for the ViewPdf Page
    ============================================================================ *@
 @code {
-    [Parameter] public int DocumentId { get; set; } @* Document ID parameter *@
+    [Parameter] public string Token { get; set; } = null!; @* Opaque document token parameter *@
     [Parameter] public string? Schema { get; set; }
     Document? doc; @* Holds the document metadata *@
     List<DocumentPage>? pages; @* Holds the document pages to check storage type *@
@@ -164,15 +154,8 @@
                 return;
             }
 
-            // First, fetch the document to get the project ID
-            if (!string.IsNullOrEmpty(Schema))
-            {
-                doc = await Repo.GetDocumentAsync("DefaultConnection", Schema, DocumentId);
-            }
-            else
-            {
-                doc = await Repo.GetDocumentAsync("DefaultConnection", DocumentId);
-            }
+            // Resolve the token to a document
+            doc = await Repo.GetDocumentByTokenAsync(Token);
 
             if (doc == null)
             {
@@ -181,19 +164,12 @@
             }
 
             // Load document pages to check storage type
-            if (!string.IsNullOrEmpty(Schema))
-            {
-                pages = await Repo.GetDocumentPagesAsync("DefaultConnection", Schema, DocumentId);
-            }
-            else
-            {
-                pages = await Repo.GetDocumentPagesAsync("DefaultConnection", DocumentId);
-            }
+            pages = await Repo.GetDocumentPagesAsync("DefaultConnection", doc.SchemaName!, doc.DocumentId);
 
             // Validate project access (Strict AD Group Check)
             // Permission logic relies strictly on AD Group Claims matching Project Read/Edit Principal
             // OR checks for Global Admin role
-            bool isGlobalAdmin = authState.User.IsInRole("DV_Global_Admins") || authState.User.HasClaim(c => (c.Type == "groups" || c.Type == "http://schemas.microsoft.com/ws/2008/06/identity/claims/groups") && c.Value == "DV_Global_Admins");
+            bool isGlobalAdmin = authState.User.IsInRole(Roles.GlobalAdminGroup) || authState.User.HasClaim(c => (c.Type == "groups" || c.Type == "http://schemas.microsoft.com/ws/2008/06/identity/claims/groups") && c.Value == Roles.GlobalAdminGroup);
             bool hasGroupAccess = doc.ProjectId.HasValue && await Repo.HasProjectAccessAsync(authState.User, doc.ProjectId.Value);
 
             if (!doc.ProjectId.HasValue || (!isGlobalAdmin && !hasGroupAccess))

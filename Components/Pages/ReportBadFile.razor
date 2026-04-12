@@ -1,0 +1,1689 @@
+@* 
+   ============================================================================
+   ReportBadFile.razor - Bad File Report Management Page
+   ============================================================================
+   
+   Purpose: Full-page interface for reporting and managing bad file reports.
+   - ReadOnly + Editor users can submit reports
+   - Only Editors can update status/resolution fields
+   - Supports pre-fill via query params from viewers
+   - Auto-selects current schema from ProjectSelectionState
+   ============================================================================
+*@
+
+@page "/report-bad-file"
+
+@using DV.Shared.DTOs
+@using DV.Shared.Models
+@using DV.Web.Services
+@using DV.Shared.Security
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Authorization
+
+@inject BadFileReportApiService ReportService
+@inject DocumentRepository Repo
+@inject ProjectSelectionState ProjectState
+@inject RoleContextService RoleContext
+@inject UserService UserService
+@inject NavigationManager Navigation
+@inject AuthenticationStateProvider AuthStateProvider
+
+@attribute [Authorize]
+@rendermode InteractiveServer
+
+<PageTitle>Report Bad File</PageTitle>
+
+<style>
+    .bf-container {
+        max-width: 1400px;
+        margin: 0 auto;
+        padding: 24px;
+        font-family: 'Segoe UI', system-ui, sans-serif;
+        color: var(--text);
+    }
+
+    .bf-header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 24px;
+    }
+
+    .bf-header h2 {
+        margin: 0;
+        color: var(--text-bright);
+        font-weight: 600;
+    }
+
+    .bf-header .bf-icon {
+        width: 40px;
+        height: 40px;
+        background: linear-gradient(135deg, var(--gold), var(--gold-bright, #d97706));
+        border-radius: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.2rem;
+        color: #fff;
+    }
+
+    /* ── Tabs ── */
+    .bf-tabs {
+        display: flex;
+        gap: 0;
+        border-bottom: 2px solid var(--border);
+        margin-bottom: 24px;
+    }
+
+    .bf-tab {
+        padding: 10px 20px;
+        cursor: pointer;
+        color: var(--text-secondary);
+        border: none;
+        background: none;
+        font-size: 0.9rem;
+        font-weight: 500;
+        border-bottom: 2px solid transparent;
+        margin-bottom: -2px;
+        transition: all 0.2s;
+    }
+
+    .bf-tab:hover {
+        color: var(--text);
+    }
+
+    .bf-tab.active {
+        color: var(--accent);
+        border-bottom-color: var(--accent);
+    }
+
+    .bf-tab .bf-badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 20px;
+        height: 20px;
+        padding: 0 6px;
+        border-radius: 10px;
+        font-size: 0.72rem;
+        font-weight: 600;
+        margin-left: 6px;
+    }
+
+    .bf-badge-open { background: var(--red); color: #fff; }
+    .bf-badge-progress { background: var(--gold); color: #000; }
+    .bf-badge-resolved { background: var(--green); color: #fff; }
+
+    /* ── Schema selector ── */
+    .bf-schema-bar {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 20px;
+        padding: 12px 16px;
+        background: var(--bg-surface);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+    }
+
+    .bf-schema-bar label {
+        color: var(--text-secondary);
+        font-size: 0.85rem;
+        font-weight: 500;
+        white-space: nowrap;
+    }
+
+    .bf-select {
+        background: var(--bg-input);
+        color: var(--text);
+        border: 1px solid var(--border-muted);
+        border-radius: 6px;
+        padding: 6px 12px;
+        font-size: 0.85rem;
+        min-width: 200px;
+    }
+
+    .bf-select:focus {
+        outline: none;
+        border-color: var(--accent);
+        box-shadow: 0 0 0 2px var(--accent-ring);
+    }
+
+    /* ── Report form ── */
+    .bf-form {
+        background: var(--bg-surface);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 24px;
+    }
+
+    .bf-form-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+    }
+
+    .bf-form-full {
+        grid-column: 1 / -1;
+    }
+
+    .bf-form-group {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
+
+    .bf-form-group label {
+        color: var(--text-secondary);
+        font-size: 0.8rem;
+        font-weight: 500;
+        text-transform: uppercase;
+        letter-spacing: 0.3px;
+    }
+
+    .bf-input {
+        background: var(--bg-input);
+        color: var(--text);
+        border: 1px solid var(--border-muted);
+        border-radius: 6px;
+        padding: 8px 12px;
+        font-size: 0.9rem;
+    }
+
+    .bf-input:focus {
+        outline: none;
+        border-color: var(--accent);
+        box-shadow: 0 0 0 2px var(--accent-ring);
+    }
+
+    .bf-input:disabled, .bf-input[readonly] {
+        opacity: 0.6;
+        cursor: not-allowed;
+    }
+
+    textarea.bf-input {
+        resize: vertical;
+        min-height: 80px;
+    }
+
+    .bf-form-actions {
+        display: flex;
+        gap: 10px;
+        margin-top: 16px;
+        justify-content: flex-end;
+    }
+
+    .bf-btn {
+        padding: 8px 20px;
+        border-radius: 6px;
+        border: none;
+        font-size: 0.85rem;
+        font-weight: 500;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        transition: all 0.2s;
+    }
+
+    .bf-btn:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+    }
+
+    .bf-btn-primary {
+        background: linear-gradient(135deg, var(--green), var(--green-hover));
+        color: #fff;
+    }
+
+    .bf-btn-primary:hover:not(:disabled) {
+        filter: brightness(1.1);
+    }
+
+    .bf-btn-secondary {
+        background: var(--bg-input);
+        color: var(--text);
+        border: 1px solid var(--border-muted);
+    }
+
+    .bf-btn-secondary:hover:not(:disabled) {
+        background: var(--bg-inset);
+        border-color: var(--accent);
+    }
+
+    /* ── Reports table ── */
+    .bf-table-wrap {
+        background: var(--bg-surface);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        overflow: hidden;
+    }
+
+    .bf-filter-bar {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 12px 16px;
+        border-bottom: 1px solid var(--border);
+        flex-wrap: wrap;
+    }
+
+    .bf-table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+
+    .bf-table th {
+        padding: 10px 14px;
+        text-align: left;
+        font-size: 0.75rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: var(--text-secondary);
+        background: var(--bg-inset-deep);
+        border-bottom: 1px solid var(--border);
+        position: sticky;
+        top: 0;
+    }
+
+    .bf-table td {
+        padding: 10px 14px;
+        font-size: 0.85rem;
+        color: var(--text);
+        border-bottom: 1px solid var(--border);
+        vertical-align: top;
+    }
+
+    .bf-table tr:hover td {
+        background: var(--accent-bg-subtle);
+    }
+
+    .bf-status {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-size: 0.75rem;
+        font-weight: 600;
+    }
+
+    .bf-status-open { background: rgba(248, 81, 73, 0.15); color: var(--red); }
+    .bf-status-inprogress { background: rgba(210, 153, 34, 0.15); color: var(--gold); }
+    .bf-status-resolved { background: rgba(63, 185, 80, 0.15); color: var(--green-bright); }
+    .bf-status-closed { background: var(--bg-inset); color: var(--text-secondary); }
+    .bf-status-rejected { background: var(--bg-inset); color: var(--text-secondary); }
+
+    .bf-priority {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 0.8rem;
+    }
+
+    .bf-priority-high { color: var(--red); }
+    .bf-priority-normal { color: var(--text-secondary); }
+    .bf-priority-low { color: var(--accent); }
+
+    .bf-empty {
+        padding: 48px 24px;
+        text-align: center;
+        color: var(--text-muted);
+    }
+
+    .bf-empty i {
+        font-size: 2.5rem;
+        opacity: 0.4;
+        margin-bottom: 12px;
+        display: block;
+    }
+
+    /* ── Alert messages ── */
+    .bf-alert {
+        padding: 12px 16px;
+        border-radius: 8px;
+        margin-bottom: 16px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 0.85rem;
+    }
+
+    .bf-alert-success {
+        background: rgba(63, 185, 80, 0.15);
+        color: var(--green-bright);
+        border: 1px solid rgba(63, 185, 80, 0.3);
+    }
+
+    .bf-alert-error {
+        background: rgba(248, 81, 73, 0.15);
+        color: var(--red);
+        border: 1px solid rgba(248, 81, 73, 0.3);
+    }
+
+    /* ── Resolution modal ── */
+    .bf-modal-backdrop {
+        position: fixed;
+        inset: 0;
+        background: rgba(0,0,0,0.6);
+        z-index: 1000;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .bf-modal {
+        background: var(--bg-surface);
+        border: 1px solid var(--border-muted);
+        border-radius: 12px;
+        width: 520px;
+        max-width: 95vw;
+        max-height: 80vh;
+        overflow-y: auto;
+        box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+    }
+
+    .bf-modal-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 16px 20px;
+        border-bottom: 1px solid var(--border);
+    }
+
+    .bf-modal-header h5 {
+        margin: 0;
+        color: var(--text-bright);
+        font-size: 1rem;
+    }
+
+    .bf-modal-body {
+        padding: 20px;
+    }
+
+    .bf-modal-footer {
+        display: flex;
+        justify-content: flex-end;
+        gap: 10px;
+        padding: 16px 20px;
+        border-top: 1px solid var(--border);
+    }
+
+    .bf-close-btn {
+        background: none;
+        border: none;
+        color: var(--text-muted);
+        cursor: pointer;
+        font-size: 1.2rem;
+    }
+
+    .bf-close-btn:hover { color: var(--red); }
+
+    /* ── Pagination ── */
+    .bf-pagination {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        padding: 16px;
+        border-top: 1px solid var(--border);
+    }
+
+    .bf-page-btn {
+        padding: 4px 10px;
+        border-radius: 4px;
+        border: 1px solid var(--border-muted);
+        background: var(--bg-input);
+        color: var(--text);
+        font-size: 0.8rem;
+        cursor: pointer;
+    }
+
+    .bf-page-btn:hover { border-color: var(--accent); }
+    .bf-page-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .bf-page-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+    .bf-loading {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 48px;
+    }
+
+    .bf-spinner {
+        width: 32px;
+        height: 32px;
+        border: 3px solid var(--border);
+        border-top-color: var(--accent);
+        border-radius: 50%;
+        animation: bf-spin 0.8s linear infinite;
+    }
+
+    @@keyframes bf-spin { to { transform: rotate(360deg); } }
+
+    /* ── File Selection Area ── */
+    .bf-file-selected {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 12px 16px;
+        background: rgba(63, 185, 80, 0.06);
+        border: 1px solid rgba(63, 185, 80, 0.25);
+        border-radius: 8px;
+    }
+
+    .bf-file-info {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        min-width: 0;
+    }
+
+    .bf-file-title {
+        font-size: 0.9rem;
+        font-weight: 600;
+        color: var(--text-bright);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .bf-file-details {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        font-size: 0.78rem;
+        color: var(--text-secondary);
+        margin-top: 2px;
+    }
+
+    .bf-file-details span {
+        display: inline-flex;
+        align-items: center;
+        gap: 3px;
+    }
+
+    .bf-file-ids {
+        color: var(--text-muted);
+        font-family: monospace;
+        font-size: 0.72rem;
+    }
+
+    .bf-file-empty {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        padding: 32px 24px;
+        border: 2px dashed var(--border);
+        border-radius: 10px;
+        cursor: pointer;
+        transition: all 0.2s;
+        text-align: center;
+    }
+
+    .bf-file-empty:hover {
+        border-color: var(--accent);
+        background: rgba(88, 166, 255, 0.04);
+    }
+
+    /* ── File Picker Dialog ── */
+    .bf-picker {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        width: min(720px, 94vw);
+        max-height: 80vh;
+        background: var(--bg-surface);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        box-shadow: 0 24px 48px rgba(0,0,0,0.4);
+        z-index: 1001;
+        display: flex;
+        flex-direction: column;
+        animation: bf-picker-in 0.2s ease;
+    }
+
+    @@keyframes bf-picker-in {
+        from { opacity: 0; transform: translate(-50%, -48%) scale(0.97); }
+        to   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+    }
+
+    .bf-picker-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 14px 20px;
+        border-bottom: 1px solid var(--border);
+        flex-shrink: 0;
+    }
+
+    .bf-picker-search {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 12px 20px;
+        border-bottom: 1px solid var(--border);
+        flex-shrink: 0;
+    }
+
+    .bf-picker-body {
+        flex: 1;
+        overflow-y: auto;
+        min-height: 200px;
+        max-height: calc(80vh - 140px);
+    }
+
+    .bf-picker-list {
+        padding: 4px 0;
+    }
+
+    .bf-picker-item {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 10px 20px;
+        cursor: pointer;
+        transition: background 0.15s;
+        border-bottom: 1px solid var(--border);
+    }
+
+    .bf-picker-item:last-child { border-bottom: none; }
+
+    .bf-picker-item:hover {
+        background: var(--accent-bg-subtle);
+    }
+
+    .bf-picker-item-icon {
+        width: 36px;
+        height: 36px;
+        border-radius: 8px;
+        background: var(--bg-inset);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1rem;
+        color: var(--accent);
+        flex-shrink: 0;
+    }
+
+    .bf-picker-item-icon.page-icon {
+        width: 32px;
+        height: 32px;
+        border-radius: 6px;
+        font-size: 0.9rem;
+        color: var(--text-secondary);
+    }
+
+    .bf-picker-item-info {
+        flex: 1;
+        min-width: 0;
+    }
+
+    .bf-picker-item-title {
+        font-size: 0.88rem;
+        font-weight: 500;
+        color: var(--text-bright);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .bf-picker-item-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        font-size: 0.75rem;
+        color: var(--text-muted);
+        margin-top: 2px;
+    }
+
+    .bf-picker-item-meta span {
+        display: inline-flex;
+        align-items: center;
+        gap: 3px;
+    }
+
+    .bf-picker-select-hint {
+        font-size: 0.75rem;
+        color: var(--accent);
+        font-weight: 500;
+        opacity: 0;
+        transition: opacity 0.15s;
+    }
+
+    .bf-picker-item:hover .bf-picker-select-hint {
+        opacity: 1;
+    }
+</style>
+
+<div class="bf-container">
+    <!-- Header -->
+    <div class="bf-header">
+        <div class="bf-icon">
+            <i class="bi bi-exclamation-triangle-fill"></i>
+        </div>
+        <div>
+            <h2>Report Bad File</h2>
+            <small style="color: var(--text-secondary);">Report and manage file quality issues</small>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrEmpty(alertMessage))
+    {
+        <div class="bf-alert @(alertIsError ? "bf-alert-error" : "bf-alert-success")">
+            <i class="bi @(alertIsError ? "bi-exclamation-circle" : "bi-check-circle")"></i>
+            @alertMessage
+        </div>
+    }
+
+    <!-- Schema selector -->
+    <div class="bf-schema-bar">
+        <label><i class="bi bi-database me-1"></i>Schema:</label>
+        <select class="bf-select" @bind="selectedSchema" @bind:after="OnSchemaChanged">
+            <option value="">-- Select Schema --</option>
+            @if (availableSchemas != null)
+            {
+                @foreach (var schema in availableSchemas)
+                {
+                    <option value="@schema">@schema</option>
+                }
+            }
+        </select>
+        @if (!string.IsNullOrEmpty(selectedSchema))
+        {
+            <span style="color: var(--text-secondary); font-size: 0.8rem;">
+                @(hasEditAccess ? "Editor" : "ReadOnly") access
+            </span>
+        }
+    </div>
+
+    <!-- Tabs -->
+    <div class="bf-tabs">
+        <button class="bf-tab @(activeTab == "submit" ? "active" : "")" @onclick='() => activeTab = "submit"'>
+            <i class="bi bi-plus-circle me-1"></i>Submit Report
+        </button>
+        <button class="bf-tab @(activeTab == "reports" ? "active" : "")" @onclick='() => { activeTab = "reports"; _ = LoadReports(); }'>
+            <i class="bi bi-list-check me-1"></i>Reports
+            @if (reportData != null)
+            {
+                @if (reportData.OpenCount > 0)
+                {
+                    <span class="bf-badge bf-badge-open">@reportData.OpenCount</span>
+                }
+                @if (reportData.InProgressCount > 0)
+                {
+                    <span class="bf-badge bf-badge-progress">@reportData.InProgressCount</span>
+                }
+            }
+        </button>
+    </div>
+
+    @if (string.IsNullOrEmpty(selectedSchema))
+    {
+        <div class="bf-empty">
+            <i class="bi bi-database"></i>
+            <p>Please select a schema to continue.</p>
+        </div>
+    }
+    else if (activeTab == "submit")
+    {
+        <!-- Submit Report Form -->
+        <div class="bf-form">
+            <h5 style="margin: 0 0 16px; color: var(--text-bright);">
+                <i class="bi bi-flag me-2" style="color: var(--accent);"></i>New Report
+            </h5>
+
+            <div class="bf-form-grid">
+                <div class="bf-form-group">
+                    <label>Issue Type <span style="color: #ff6b6b;">*</span></label>
+                    <select class="bf-input bf-select" @bind="newReportType">
+                        <option value="">-- Select --</option>
+                        <option value="Blurry">Blurry Image</option>
+                        <option value="Missing">Missing File</option>
+                        <option value="Corrupted">Corrupted Data</option>
+                        <option value="Wrong File">Wrong File</option>
+                        <option value="Poor Quality">Poor Quality</option>
+                        <option value="Unreadable">Unreadable Text</option>
+                        <option value="Wrong Version">Wrong Version</option>
+                        <option value="Other">Other</option>
+                    </select>
+                </div>
+
+                <div class="bf-form-group">
+                    <label>Priority</label>
+                    <select class="bf-input bf-select" @bind="newPriority">
+                        <option value="Low">Low</option>
+                        <option value="Normal">Normal</option>
+                        <option value="High">High</option>
+                    </select>
+                </div>
+
+                @* ── File Selection ── *@
+                <div class="bf-form-group bf-form-full">
+                    <label>File <span style="color: #ff6b6b;">*</span></label>
+                    @if (newDocumentPageId > 0)
+                    {
+                        @* File is selected — show summary *@
+                        <div class="bf-file-selected">
+                            <div class="bf-file-info">
+                                <i class="bi bi-file-earmark-check" style="font-size:1.5rem; color:var(--green-bright);"></i>
+                                <div>
+                                    <div class="bf-file-title">
+                                        @if (!string.IsNullOrEmpty(selectedDocTitle))
+                                        {
+                                            <span>@selectedDocTitle</span>
+                                        }
+                                        else
+                                        {
+                                            <span>Document #@newDocumentId</span>
+                                        }
+                                    </div>
+                                    <div class="bf-file-details">
+                                        @if (!string.IsNullOrEmpty(newFileName))
+                                        {
+                                            <span><i class="bi bi-file-earmark"></i> @newFileName</span>
+                                        }
+                                        <span><i class="bi bi-layers"></i> Page @newPageNumber</span>
+                                        <span class="bf-file-ids">Doc #@newDocumentId &middot; Page ID @newDocumentPageId</span>
+                                    </div>
+                                </div>
+                            </div>
+                            @if (!prefilled)
+                            {
+                                <button class="bf-btn bf-btn-secondary" style="padding:4px 12px; font-size:.78rem;"
+                                        @onclick="OpenFilePicker">
+                                    <i class="bi bi-arrow-repeat"></i>Change
+                                </button>
+                            }
+                        </div>
+                    }
+                    else
+                    {
+                        @* No file selected — show browse button *@
+                        <div class="bf-file-empty" @onclick="OpenFilePicker">
+                            <i class="bi bi-folder2-open" style="font-size:2rem; color:var(--accent); opacity:.7;"></i>
+                            <span style="font-weight:500; color:var(--text-bright);">Browse & Select a File</span>
+                            <span style="font-size:.78rem; color:var(--text-muted);">
+                                Click to browse documents and select the file you want to report
+                            </span>
+                        </div>
+                    }
+                </div>
+
+                <div class="bf-form-group bf-form-full">
+                    <label>Description <span style="color: #ff6b6b;">*</span></label>
+                    <textarea class="bf-input" @bind="newDescription"
+                              placeholder="Describe the issue in detail — what is wrong, what you expected to see, etc."></textarea>
+                </div>
+            </div>
+
+            <div class="bf-form-actions">
+                <button class="bf-btn bf-btn-secondary" @onclick="ResetForm">
+                    <i class="bi bi-x-circle"></i> Clear
+                </button>
+                <button class="bf-btn bf-btn-primary" @onclick="SubmitReport" disabled="@isSubmitting">
+                    @if (isSubmitting)
+                    {
+                        <span class="spinner-border spinner-border-sm" role="status"></span>
+                        <span>Submitting...</span>
+                    }
+                    else
+                    {
+                        <i class="bi bi-send"></i>
+                        <span>Submit Report</span>
+                    }
+                </button>
+            </div>
+        </div>
+    }
+    else if (activeTab == "reports")
+    {
+        <!-- Reports List -->
+        <div class="bf-table-wrap">
+            <div class="bf-filter-bar">
+                <label style="color: var(--text-secondary); font-size: 0.8rem;">Filter:</label>
+                <select class="bf-select" style="min-width: 130px;" @bind="filterStatus" @bind:after="LoadReports">
+                    <option value="">All Status</option>
+                    <option value="Open">Open</option>
+                    <option value="InProgress">In Progress</option>
+                    <option value="Resolved">Resolved</option>
+                    <option value="Closed">Closed</option>
+                    <option value="Rejected">Rejected</option>
+                </select>
+                <select class="bf-select" style="min-width: 130px;" @bind="filterPriority" @bind:after="LoadReports">
+                    <option value="">All Priority</option>
+                    <option value="High">High</option>
+                    <option value="Normal">Normal</option>
+                    <option value="Low">Low</option>
+                </select>
+            </div>
+
+            @if (isLoadingReports)
+            {
+                <div class="bf-loading">
+                    <div class="bf-spinner"></div>
+                </div>
+            }
+            else if (reportData == null || reportData.Reports.Count == 0)
+            {
+                <div class="bf-empty">
+                    <i class="bi bi-check-circle"></i>
+                    <p>No reports found for this schema.</p>
+                </div>
+            }
+            else
+            {
+                <table class="bf-table">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Status</th>
+                            <th>Type</th>
+                            <th>Priority</th>
+                            <th>Document</th>
+                            <th>Description</th>
+                            <th>Reported By</th>
+                            <th>Date</th>
+                            @if (hasEditAccess)
+                            {
+                                <th>Actions</th>
+                            }
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var report in reportData.Reports)
+                        {
+                            <tr>
+                                <td>@report.BadFileReportId</td>
+                                <td>
+                                    <span class="bf-status bf-status-@report.Status.ToLower()">
+                                        @report.Status
+                                    </span>
+                                </td>
+                                <td>@report.ReportType</td>
+                                <td>
+                                    <span class="bf-priority bf-priority-@report.Priority.ToLower()">
+                                        @if (report.Priority == "High") { <i class="bi bi-arrow-up-circle-fill"></i> }
+                                        else if (report.Priority == "Low") { <i class="bi bi-arrow-down-circle"></i> }
+                                        @report.Priority
+                                    </span>
+                                </td>
+                                <td>
+                                    <span style="font-family: monospace; font-size: 0.8rem;">Doc #@report.DocumentId</span>
+                                    <br />
+                                    <small style="color: var(--text-secondary);">Page @report.PageNumber</small>
+                                    @if (!string.IsNullOrEmpty(report.FileName))
+                                    {
+                                        <br />
+                                        <small style="color: var(--text-secondary);">@report.FileName</small>
+                                    }
+                                </td>
+                                <td style="max-width: 250px;">
+                                    <span style="display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;">
+                                        @(report.Description ?? "—")
+                                    </span>
+                                </td>
+                                <td>
+                                    <small>@(report.ReportedByUsername ?? "—")</small>
+                                    <br />
+                                    <small style="color: var(--text-secondary);">@report.ReportedOn.ToString("MMM dd, yyyy")</small>
+                                </td>
+                                <td>
+                                    <small style="color: var(--text-secondary);">
+                                        @report.ReportedOn.ToString("HH:mm")
+                                    </small>
+                                </td>
+                                @if (hasEditAccess)
+                                {
+                                    <td>
+                                        @if (report.Status is "Open" or "InProgress")
+                                        {
+                                            <button class="bf-btn bf-btn-secondary" style="padding: 4px 10px; font-size: 0.75rem;"
+                                                    @onclick="() => OpenResolveModal(report)">
+                                                <i class="bi bi-pencil-square"></i> Resolve
+                                            </button>
+                                        }
+                                        else
+                                        {
+                                            <small style="color: var(--text-secondary);">
+                                                @(report.ResolvedByUsername ?? "—")
+                                                <br />
+                                                @(report.ResolvedOn?.ToString("MMM dd") ?? "")
+                                            </small>
+                                        }
+                                    </td>
+                                }
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+
+                @if (reportData.TotalPages > 1)
+                {
+                    <div class="bf-pagination">
+                        <button class="bf-page-btn" disabled="@(currentPage <= 1)"
+                                @onclick="() => { currentPage--; _ = LoadReports(); }">
+                            <i class="bi bi-chevron-left"></i>
+                        </button>
+                        @for (int i = 1; i <= reportData.TotalPages; i++)
+                        {
+                            var pg = i;
+                            <button class="bf-page-btn @(pg == currentPage ? "active" : "")"
+                                    @onclick="() => { currentPage = pg; _ = LoadReports(); }">
+                                @pg
+                            </button>
+                        }
+                        <button class="bf-page-btn" disabled="@(currentPage >= reportData.TotalPages)"
+                                @onclick="() => { currentPage++; _ = LoadReports(); }">
+                            <i class="bi bi-chevron-right"></i>
+                        </button>
+                    </div>
+                }
+            }
+        </div>
+    }
+</div>
+
+<!-- Resolution Modal (Editors only) -->
+@if (showResolveModal && resolveTarget != null)
+{
+    <div class="bf-modal-backdrop" @onclick="CloseResolveModal">
+        <div class="bf-modal" @onclick:stopPropagation="true">
+            <div class="bf-modal-header">
+                <h5>
+                    <i class="bi bi-tools me-2" style="color: var(--accent);"></i>
+                    Resolve Report #@resolveTarget.BadFileReportId
+                </h5>
+                <button class="bf-close-btn" @onclick="CloseResolveModal">
+                    <i class="bi bi-x-lg"></i>
+                </button>
+            </div>
+            <div class="bf-modal-body">
+                <div style="margin-bottom: 12px; padding: 10px; background: var(--bg-inset); border-radius: 6px;">
+                    <small style="color: var(--text-secondary);">
+                        <strong>Type:</strong> @resolveTarget.ReportType |
+                        <strong>Doc:</strong> #@resolveTarget.DocumentId |
+                        <strong>Page:</strong> @resolveTarget.PageNumber
+                    </small>
+                    @if (!string.IsNullOrEmpty(resolveTarget.Description))
+                    {
+                        <p style="margin: 6px 0 0; font-size: 0.85rem; color: var(--text);">@resolveTarget.Description</p>
+                    }
+                </div>
+
+                <div class="bf-form-group" style="margin-bottom: 12px;">
+                    <label>Status</label>
+                    <select class="bf-input bf-select" @bind="resolveStatus">
+                        <option value="InProgress">In Progress</option>
+                        <option value="Resolved">Resolved</option>
+                        <option value="Closed">Closed</option>
+                        <option value="Rejected">Rejected</option>
+                    </select>
+                </div>
+
+                <div class="bf-form-group" style="margin-bottom: 12px;">
+                    <label>Corrective Action</label>
+                    <textarea class="bf-input" @bind="resolveCorrectiveAction"
+                              placeholder="What was done to fix the issue..."></textarea>
+                </div>
+
+                <div class="bf-form-group">
+                    <label>Resolution Notes</label>
+                    <textarea class="bf-input" @bind="resolveNotes"
+                              placeholder="Additional notes for the resolution..."></textarea>
+                </div>
+            </div>
+            <div class="bf-modal-footer">
+                <button class="bf-btn bf-btn-secondary" @onclick="CloseResolveModal">Cancel</button>
+                <button class="bf-btn bf-btn-primary" @onclick="SubmitResolution" disabled="@isResolving">
+                    @if (isResolving)
+                    {
+                        <span class="spinner-border spinner-border-sm" role="status"></span>
+                    }
+                    <i class="bi bi-check-lg"></i> Update
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@* ─── FILE PICKER DIALOG ─── *@
+@if (showFilePicker)
+{
+    <div class="bf-modal-backdrop" @onclick="CloseFilePicker"></div>
+    <div class="bf-picker" @onclick:stopPropagation="true">
+        <div class="bf-picker-header">
+            <div style="display:flex;align-items:center;gap:10px;">
+                <i class="bi bi-folder2-open" style="font-size:1.1rem; color:var(--accent);"></i>
+                <strong>@(pickerStep == 1 ? "Select a Document" : "Select a Page")</strong>
+            </div>
+            <button class="bf-close-btn" @onclick="CloseFilePicker">
+                <i class="bi bi-x-lg"></i>
+            </button>
+        </div>
+
+        @if (pickerStep == 1)
+        {
+            @* ── Step 1: Browse Documents ── *@
+            <div class="bf-picker-search">
+                <div style="display:flex; gap:8px; flex:1;">
+                    <div style="position:relative; flex:1;">
+                        <i class="bi bi-search" style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--text-muted);font-size:.85rem;"></i>
+                        <input class="bf-input" style="padding-left:32px;width:100%;"
+                               @bind="pickerSearchTerm" @bind:event="oninput"
+                               @bind:after="OnPickerSearchChanged"
+                               placeholder="Search by title, author, document number, or keywords..." />
+                    </div>
+                </div>
+                @if (pickerTotalCount >= 0)
+                {
+                    <span style="font-size:.78rem;color:var(--text-muted);white-space:nowrap;">
+                        @pickerTotalCount document@(pickerTotalCount != 1 ? "s" : "")
+                    </span>
+                }
+            </div>
+
+            <div class="bf-picker-body">
+                @if (isPickerLoading)
+                {
+                    <div class="bf-loading"><div class="bf-spinner"></div></div>
+                }
+                else if (pickerDocuments == null || pickerDocuments.Count == 0)
+                {
+                    <div class="bf-empty">
+                        <i class="bi bi-search"></i>
+                        <p>No documents found. Try a different search.</p>
+                    </div>
+                }
+                else
+                {
+                    <div class="bf-picker-list">
+                        @foreach (var doc in pickerDocuments)
+                        {
+                            <div class="bf-picker-item" @onclick="() => SelectDocument(doc)">
+                                <div class="bf-picker-item-icon">
+                                    <i class="bi @GetDocTypeIcon(doc.DocumentType)"></i>
+                                </div>
+                                <div class="bf-picker-item-info">
+                                    <div class="bf-picker-item-title">
+                                        @(doc.Title ?? "Untitled")
+                                    </div>
+                                    <div class="bf-picker-item-meta">
+                                        @if (!string.IsNullOrEmpty(doc.DocumentNumber))
+                                        {
+                                            <span><i class="bi bi-hash"></i>@doc.DocumentNumber</span>
+                                        }
+                                        @if (!string.IsNullOrEmpty(doc.Author))
+                                        {
+                                            <span><i class="bi bi-person"></i>@doc.Author</span>
+                                        }
+                                        @if (!string.IsNullOrEmpty(doc.DocumentType))
+                                        {
+                                            <span><i class="bi bi-tag"></i>@doc.DocumentType</span>
+                                        }
+                                        @if (doc.DocumentDate.HasValue)
+                                        {
+                                            <span><i class="bi bi-calendar"></i>@doc.DocumentDate.Value.ToString("MMM dd, yyyy")</span>
+                                        }
+                                    </div>
+                                </div>
+                                <i class="bi bi-chevron-right" style="color:var(--text-muted);"></i>
+                            </div>
+                        }
+                    </div>
+
+                    @if (pickerTotalPages > 1)
+                    {
+                        <div class="bf-pagination">
+                            <button class="bf-page-btn" disabled="@(pickerPage <= 1)"
+                                    @onclick="() => { pickerPage--; _ = LoadPickerDocuments(); }">
+                                <i class="bi bi-chevron-left"></i>
+                            </button>
+                            <span style="font-size:.8rem;color:var(--text-secondary);">
+                                Page @pickerPage of @pickerTotalPages
+                            </span>
+                            <button class="bf-page-btn" disabled="@(pickerPage >= pickerTotalPages)"
+                                    @onclick="() => { pickerPage++; _ = LoadPickerDocuments(); }">
+                                <i class="bi bi-chevron-right"></i>
+                            </button>
+                        </div>
+                    }
+                }
+            </div>
+        }
+        else
+        {
+            @* ── Step 2: Select a Page ── *@
+            <div class="bf-picker-search" style="border-bottom:1px solid var(--border);">
+                <button class="bf-btn bf-btn-secondary" style="padding:4px 10px; font-size:.78rem;"
+                        @onclick="BackToDocuments">
+                    <i class="bi bi-arrow-left"></i>Back to documents
+                </button>
+                <div style="font-size:.85rem; color:var(--text-bright);">
+                    <i class="bi bi-file-earmark me-1" style="color:var(--accent);"></i>
+                    @(pickerSelectedDoc?.Title ?? "Document") — #@pickerSelectedDoc?.DocumentId
+                </div>
+            </div>
+
+            <div class="bf-picker-body">
+                @if (isPickerLoadingPages)
+                {
+                    <div class="bf-loading"><div class="bf-spinner"></div></div>
+                }
+                else if (pickerPages == null || pickerPages.Count == 0)
+                {
+                    <div class="bf-empty">
+                        <i class="bi bi-file-earmark-x"></i>
+                        <p>No pages found for this document.</p>
+                    </div>
+                }
+                else
+                {
+                    <div class="bf-picker-list">
+                        @foreach (var page in pickerPages)
+                        {
+                            <div class="bf-picker-item" @onclick="() => SelectPage(page)">
+                                <div class="bf-picker-item-icon page-icon">
+                                    <i class="bi @GetFileTypeIcon(page.FileType)"></i>
+                                </div>
+                                <div class="bf-picker-item-info">
+                                    <div class="bf-picker-item-title">
+                                        @(page.FileName ?? $"Page {page.PageNumber}")
+                                    </div>
+                                    <div class="bf-picker-item-meta">
+                                        <span><i class="bi bi-layers"></i>Page @(page.PageNumber)</span>
+                                        @if (!string.IsNullOrEmpty(page.FileType))
+                                        {
+                                            <span><i class="bi bi-tag"></i>@(page.FileType.ToUpper())</span>
+                                        }
+                                        @if (page.FileSize.HasValue && page.FileSize > 0)
+                                        {
+                                            <span><i class="bi bi-hdd"></i>@(FormatFileSize(page.FileSize.Value))</span>
+                                        }
+                                    </div>
+                                </div>
+                                <span class="bf-picker-select-hint">Select</span>
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+        }
+    </div>
+}
+
+@code {
+    // ── Form fields ──
+    private string selectedSchema = "";
+    private string newReportType = "";
+    private string newPriority = "Normal";
+    private int newDocumentId;
+    private int newPageNumber = 1;
+    private int newDocumentPageId;
+    private string newFileName = "";
+    private string newDescription = "";
+    private string selectedDocTitle = "";
+    private bool prefilled;
+
+    // ── State ──
+    private string activeTab = "submit";
+    private List<string>? availableSchemas;
+    private bool hasEditAccess;
+    private bool isSubmitting;
+    private bool isLoadingReports;
+    private string? alertMessage;
+    private bool alertIsError;
+
+    // ── Reports list ──
+    private BadFileReportListResponseDto? reportData;
+    private int currentPage = 1;
+    private string filterStatus = "";
+    private string filterPriority = "";
+
+    // ── Resolution modal ──
+    private bool showResolveModal;
+    private BadFileReportDto? resolveTarget;
+    private string resolveStatus = "Resolved";
+    private string resolveCorrectiveAction = "";
+    private string resolveNotes = "";
+    private bool isResolving;
+
+    // ── File Picker ──
+    private bool showFilePicker;
+    private int pickerStep = 1; // 1 = Browse Documents, 2 = Select Page
+    private string pickerSearchTerm = "";
+    private List<Document>? pickerDocuments;
+    private int pickerPage = 1;
+    private int pickerTotalCount;
+    private int pickerTotalPages;
+    private bool isPickerLoading;
+    private Document? pickerSelectedDoc;
+    private List<DocumentPage>? pickerPages;
+    private bool isPickerLoadingPages;
+    private System.Threading.Timer? pickerDebounceTimer;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Load available schemas from projects
+        var projects = await Repo.GetProjectsAsync();
+        availableSchemas = projects
+            .Where(p => !string.IsNullOrEmpty(p.SchemaName))
+            .Select(p => p.SchemaName!)
+            .Distinct()
+            .OrderBy(s => s)
+            .ToList();
+
+        // Auto-select from ProjectSelectionState
+        if (!string.IsNullOrEmpty(ProjectState.SelectedSchemaName) &&
+            availableSchemas.Contains(ProjectState.SelectedSchemaName))
+        {
+            selectedSchema = ProjectState.SelectedSchemaName;
+            hasEditAccess = ProjectState.HasEditAccess;
+        }
+
+        // Check for pre-fill query parameters
+        var uri = new Uri(Navigation.Uri);
+        var query = System.Web.HttpUtility.ParseQueryString(uri.Query);
+
+        if (!string.IsNullOrEmpty(query["schema"]))
+        {
+            selectedSchema = query["schema"]!;
+        }
+
+        if (int.TryParse(query["documentId"], out var docId))
+        {
+            newDocumentId = docId;
+            prefilled = true;
+        }
+
+        if (int.TryParse(query["pageId"], out var pageId))
+        {
+            newDocumentPageId = pageId;
+            prefilled = true;
+        }
+
+        if (int.TryParse(query["pageNumber"], out var pageNum))
+        {
+            newPageNumber = pageNum;
+        }
+
+        if (!string.IsNullOrEmpty(query["fileName"]))
+        {
+            newFileName = query["fileName"]!;
+            prefilled = true;
+        }
+
+        // Resolve edit access for pre-filled schema
+        if (!string.IsNullOrEmpty(selectedSchema) && !hasEditAccess)
+        {
+            await ResolveEditAccess();
+        }
+
+        // Load document title when pre-filled
+        if (prefilled && newDocumentId > 0)
+        {
+            try
+            {
+                var doc = !string.IsNullOrEmpty(selectedSchema)
+                    ? await Repo.GetDocumentAsync("DefaultConnection", selectedSchema, newDocumentId)
+                    : await Repo.GetDocumentAsync("DefaultConnection", newDocumentId);
+                selectedDocTitle = doc?.Title ?? "";
+            }
+            catch { /* non-critical */ }
+        }
+    }
+
+    private async Task OnSchemaChanged()
+    {
+        alertMessage = null;
+        reportData = null;
+        currentPage = 1;
+        await ResolveEditAccess();
+
+        if (activeTab == "reports")
+            await LoadReports();
+    }
+
+    private async Task ResolveEditAccess()
+    {
+        hasEditAccess = false;
+        if (string.IsNullOrEmpty(selectedSchema)) return;
+
+        try
+        {
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var username = authState.User?.Identity?.Name;
+            if (string.IsNullOrEmpty(username)) return;
+
+            // Check if user has edit access to any project with this schema
+            var projects = await Repo.GetProjectsAsync();
+            var matchingProject = projects.FirstOrDefault(p =>
+                string.Equals(p.SchemaName, selectedSchema, StringComparison.OrdinalIgnoreCase));
+
+            if (matchingProject != null)
+            {
+                hasEditAccess = await Repo.HasProjectEditAccessAsync(authState.User, matchingProject.ProjectId);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"ReportBadFile: Error resolving edit access: {ex.Message}");
+        }
+    }
+
+    private async Task SubmitReport()
+    {
+        alertMessage = null;
+
+        if (string.IsNullOrWhiteSpace(newReportType))
+        {
+            alertMessage = "Please select an issue type.";
+            alertIsError = true;
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(newDescription))
+        {
+            alertMessage = "Please provide a description of the issue.";
+            alertIsError = true;
+            return;
+        }
+
+        if (newDocumentPageId <= 0)
+        {
+            alertMessage = "Please provide a valid Page ID (DocumentPageId).";
+            alertIsError = true;
+            return;
+        }
+
+        isSubmitting = true;
+        try
+        {
+            var dto = new CreateBadFileReportDto
+            {
+                SchemaName = selectedSchema,
+                DocumentId = newDocumentId,
+                DocumentPageId = newDocumentPageId,
+                PageNumber = newPageNumber,
+                FileName = string.IsNullOrWhiteSpace(newFileName) ? null : newFileName,
+                ReportType = newReportType,
+                Description = newDescription,
+                Priority = newPriority
+            };
+
+            var result = await ReportService.CreateReportAsync(dto);
+            if (result != null)
+            {
+                alertMessage = $"Report #{result.BadFileReportId} submitted successfully.";
+                alertIsError = false;
+                ResetForm();
+            }
+            else
+            {
+                alertMessage = "Failed to submit report. Please try again.";
+                alertIsError = true;
+            }
+        }
+        catch (Exception ex)
+        {
+            alertMessage = $"Error: {ex.Message}";
+            alertIsError = true;
+        }
+        finally
+        {
+            isSubmitting = false;
+        }
+    }
+
+    private async Task LoadReports()
+    {
+        if (string.IsNullOrEmpty(selectedSchema)) return;
+
+        isLoadingReports = true;
+        StateHasChanged();
+
+        try
+        {
+            reportData = await ReportService.GetReportsAsync(
+                selectedSchema,
+                string.IsNullOrEmpty(filterStatus) ? null : filterStatus,
+                null,
+                string.IsNullOrEmpty(filterPriority) ? null : filterPriority,
+                currentPage);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"ReportBadFile: Error loading reports: {ex.Message}");
+        }
+        finally
+        {
+            isLoadingReports = false;
+            StateHasChanged();
+        }
+    }
+
+    private void ResetForm()
+    {
+        newReportType = "";
+        newPriority = "Normal";
+        newDocumentId = 0;
+        newPageNumber = 1;
+        newDocumentPageId = 0;
+        newFileName = "";
+        newDescription = "";
+        selectedDocTitle = "";
+        prefilled = false;
+    }
+
+    private void OpenResolveModal(BadFileReportDto report)
+    {
+        resolveTarget = report;
+        resolveStatus = report.Status == "Open" ? "InProgress" : "Resolved";
+        resolveCorrectiveAction = report.CorrectiveAction ?? "";
+        resolveNotes = report.ResolutionNotes ?? "";
+        showResolveModal = true;
+    }
+
+    private void CloseResolveModal()
+    {
+        showResolveModal = false;
+        resolveTarget = null;
+    }
+
+    private async Task SubmitResolution()
+    {
+        if (resolveTarget == null) return;
+
+        isResolving = true;
+        try
+        {
+            var dto = new UpdateBadFileReportDto
+            {
+                Status = resolveStatus,
+                CorrectiveAction = string.IsNullOrWhiteSpace(resolveCorrectiveAction) ? null : resolveCorrectiveAction,
+                ResolutionNotes = string.IsNullOrWhiteSpace(resolveNotes) ? null : resolveNotes
+            };
+
+            var result = await ReportService.UpdateReportAsync(selectedSchema, resolveTarget.BadFileReportId, dto);
+            if (result != null)
+            {
+                alertMessage = $"Report #{resolveTarget.BadFileReportId} updated to '{resolveStatus}'.";
+                alertIsError = false;
+                CloseResolveModal();
+                await LoadReports();
+            }
+            else
+            {
+                alertMessage = "Failed to update report.";
+                alertIsError = true;
+            }
+        }
+        catch (Exception ex)
+        {
+            alertMessage = $"Error: {ex.Message}";
+            alertIsError = true;
+        }
+        finally
+        {
+            isResolving = false;
+        }
+    }
+
+    // ── File Picker ──
+
+    private async Task OpenFilePicker()
+    {
+        pickerStep = 1;
+        pickerSearchTerm = "";
+        pickerPage = 1;
+        pickerDocuments = null;
+        pickerSelectedDoc = null;
+        pickerPages = null;
+        showFilePicker = true;
+        await LoadPickerDocuments();
+    }
+
+    private void CloseFilePicker()
+    {
+        showFilePicker = false;
+        pickerDebounceTimer?.Dispose();
+        pickerDebounceTimer = null;
+    }
+
+    private void OnPickerSearchChanged()
+    {
+        pickerDebounceTimer?.Dispose();
+        pickerDebounceTimer = new System.Threading.Timer(async _ =>
+        {
+            pickerPage = 1;
+            await InvokeAsync(async () =>
+            {
+                await LoadPickerDocuments();
+                StateHasChanged();
+            });
+        }, null, TimeSpan.FromMilliseconds(350), Timeout.InfiniteTimeSpan);
+    }
+
+    private async Task LoadPickerDocuments()
+    {
+        if (string.IsNullOrEmpty(selectedSchema)) return;
+
+        isPickerLoading = true;
+        StateHasChanged();
+
+        try
+        {
+            // Find a projectId for this schema
+            var projects = await Repo.GetProjectsAsync();
+            var project = projects.FirstOrDefault(p =>
+                string.Equals(p.SchemaName, selectedSchema, StringComparison.OrdinalIgnoreCase));
+
+            if (project == null) return;
+
+            var (docs, totalCount) = await Repo.SearchWithMetadataAsync(
+                "DefaultConnection",
+                string.IsNullOrWhiteSpace(pickerSearchTerm) ? null : pickerSearchTerm,
+                pickerPage, 15,
+                projectId: project.ProjectId,
+                sortColumn: "DocumentNumber",
+                sortDirection: "asc");
+
+            pickerDocuments = docs;
+            pickerTotalCount = totalCount;
+            pickerTotalPages = (int)Math.Ceiling(totalCount / 15.0);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"File picker: Error loading documents: {ex.Message}");
+            pickerDocuments = new();
+            pickerTotalCount = 0;
+            pickerTotalPages = 0;
+        }
+        finally
+        {
+            isPickerLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task SelectDocument(Document doc)
+    {
+        pickerSelectedDoc = doc;
+        pickerStep = 2;
+        isPickerLoadingPages = true;
+        StateHasChanged();
+
+        try
+        {
+            var pages = await Repo.GetPagesAsync("DefaultConnection", selectedSchema, doc.DocumentId);
+            pickerPages = pages?.ToList() ?? new();
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"File picker: Error loading pages: {ex.Message}");
+            pickerPages = new();
+        }
+        finally
+        {
+            isPickerLoadingPages = false;
+            StateHasChanged();
+        }
+    }
+
+    private void SelectPage(DocumentPage page)
+    {
+        newDocumentId = page.DocumentId;
+        newDocumentPageId = page.PageId;
+        newPageNumber = page.PageNumber;
+        newFileName = page.FileName ?? "";
+        selectedDocTitle = pickerSelectedDoc?.Title ?? "";
+        prefilled = false; // allow changing later
+        showFilePicker = false;
+        pickerDebounceTimer?.Dispose();
+        pickerDebounceTimer = null;
+    }
+
+    private void BackToDocuments()
+    {
+        pickerStep = 1;
+        pickerSelectedDoc = null;
+        pickerPages = null;
+    }
+
+    // ── Helpers ──
+
+    private static string GetDocTypeIcon(string? docType) => docType?.ToLower() switch
+    {
+        "pdf" => "bi-file-earmark-pdf",
+        "tiff" or "tif" => "bi-file-earmark-image",
+        "word" or "doc" or "docx" => "bi-file-earmark-word",
+        "excel" or "xls" or "xlsx" => "bi-file-earmark-excel",
+        "image" or "jpg" or "jpeg" or "png" => "bi-file-earmark-image",
+        "cad" or "dwg" => "bi-rulers",
+        "email" or "msg" or "eml" => "bi-envelope",
+        _ => "bi-file-earmark"
+    };
+
+    private static string GetFileTypeIcon(string? fileType) => fileType?.ToLower() switch
+    {
+        "pdf" => "bi-file-earmark-pdf",
+        "tiff" or "tif" => "bi-file-earmark-image",
+        "doc" or "docx" => "bi-file-earmark-word",
+        "xls" or "xlsx" => "bi-file-earmark-excel",
+        "jpg" or "jpeg" or "png" or "gif" or "bmp" => "bi-file-earmark-image",
+        _ => "bi-file-earmark"
+    };
+
+    private static string FormatFileSize(long bytes)
+    {
+        if (bytes < 1024) return $"{bytes} B";
+        if (bytes < 1024 * 1024) return $"{bytes / 1024.0:F1} KB";
+        if (bytes < 1024 * 1024 * 1024) return $"{bytes / (1024.0 * 1024):F1} MB";
+        return $"{bytes / (1024.0 * 1024 * 1024):F2} GB";
+    }
+}

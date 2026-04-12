@@ -1,0 +1,85 @@
+@using DV.Web.Services
+@inject NotificationApiService NotificationService
+@inject NavigationManager Navigation
+@implements IDisposable
+
+<a href="notifications" class="notification-bell-link position-relative me-3" title="Notifications">
+    @if (_unreadCount > 0)
+    {
+        <i class="bi bi-bell-fill text-white fs-5"></i>
+        <span class="position-absolute top-0 start-100 translate-middle badge rounded-pill @(_importantCount > 0 ? "bg-danger" : "bg-primary") notification-badge">
+            @(_unreadCount > 99 ? "99+" : _unreadCount.ToString())
+        </span>
+    }
+    else
+    {
+        <i class="bi bi-bell text-white-50 fs-5"></i>
+    }
+</a>
+
+<style>
+    .notification-bell-link {
+        text-decoration: none;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        padding: 4px 8px;
+        border-radius: 6px;
+        transition: background-color 0.2s;
+    }
+
+    .notification-bell-link:hover {
+        background-color: rgba(255, 255, 255, 0.1);
+    }
+
+    .notification-badge {
+        font-size: 0.65rem;
+        padding: 0.2em 0.45em;
+        animation: pulse-badge 2s infinite;
+    }
+
+    @@keyframes pulse-badge {
+        0%, 100% { transform: translate(-50%, -50%) scale(1); }
+        50% { transform: translate(-50%, -50%) scale(1.1); }
+    }
+</style>
+
+@code {
+    private int _unreadCount;
+    private int _importantCount;
+    private Timer? _pollTimer;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await LoadUnreadCount();
+            await InvokeAsync(StateHasChanged);
+
+            _pollTimer = new Timer(async _ =>
+            {
+                await LoadUnreadCount();
+                await InvokeAsync(StateHasChanged);
+            }, null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
+        }
+    }
+
+    private async Task LoadUnreadCount()
+    {
+        try
+        {
+            var result = await NotificationService.GetUnreadCountAsync();
+            _unreadCount = result.UnreadCount;
+            _importantCount = result.ImportantUnreadCount;
+        }
+        catch
+        {
+            // Silently handle polling failures
+        }
+    }
+
+    public void Dispose()
+    {
+        _pollTimer?.Dispose();
+    }
+}

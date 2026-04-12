@@ -1,24 +1,4 @@
-﻿@* 
-   ============================================================================
-   DocumentSearch.razor - Document Search Component (formerly Home.razor)
-   ============================================================================
-   
-   Purpose: Provides document search functionality for authenticated users:
-   - Select a database (project)
-   - Search for documents based on criteria
-   - View search results in a table
-   - Display document metadata and a "View Document" button in the details panel
-   
-   Created: [Date]
-   Last Updated: [Date]
-   
-   Dependencies:
-   - DocumentRepository: Handles database interactions for documents and projects
-   - Bootstrap 5.x for styling
-   - Blazor components for interactivity
-*@
-
-@using DV.Shared.Models
+﻿@using DV.Shared.Models
 @using DV.Web.Services
 @using DV.Shared.Security
 @using Microsoft.AspNetCore.Authorization
@@ -29,290 +9,918 @@
 @inject AuditService AuditService
 @inject IServiceProvider ServiceProvider
 @inject ProjectSelectionState ProjectSelectionState
+@inject IJSRuntime JS
 @attribute [Authorize]
 @rendermode InteractiveServer
 
-@* ============================================================================
-   Document Search Component - Full Page Layout
-   ============================================================================ *@
+<style>
+    /* ====== Page Shell ====== */
+    .ds-shell {
+        display: grid;
+        grid-template-columns: 240px 1fr;
+        grid-template-rows: 1fr;
+        height: calc(100vh - 64px);
+        margin: -1rem -1.5rem 0 -1.5rem;
+        width: calc(100% + 3rem);
+        background: var(--bg-body);
+        color: var(--text);
+        overflow: hidden;
+    }
 
-<div class="document-search-container">
-    <div class="dashboard-grid">
-        @* Main container for the dashboard layout *@
+    /* ====== Search Sidebar ====== */
+    .ds-sidebar {
+        background: var(--bg-surface);
+        border-right: 1px solid var(--border);
+        display: flex;
+        flex-direction: column;
+        overflow-y: auto;
+        padding: 16px 14px;
+        gap: 14px;
+    }
 
-        @* ========================================================================
-           Left Column (30%): Project Selection & Search Criteria
-           ========================================================================
-           Merged panel for database selection and search input.
-        *@
-        <div class="dashboard-panel left-panel">
-            <div class="card h-100">
-                <div class="card-header bg-secondary text-white">
-                    <strong>Search Parameters</strong>
+    .ds-sidebar-title {
+        font-size: 0.7rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        color: var(--text-secondary);
+        margin-bottom: 2px;
+    }
+
+    .ds-select {
+        width: 100%;
+        background: var(--bg-input);
+        border: 1px solid var(--border-muted);
+        border-radius: 6px;
+        color: var(--text);
+        padding: 6px 10px;
+        font-size: 0.8rem;
+        transition: border-color 0.15s;
+    }
+    .ds-select:focus { border-color: var(--accent); outline: none; }
+
+    .ds-input {
+        width: 100%;
+        background: var(--bg-input);
+        border: 1px solid var(--border-muted);
+        border-radius: 6px;
+        color: var(--text);
+        padding: 6px 10px;
+        font-size: 0.8rem;
+        transition: border-color 0.15s;
+    }
+    .ds-input::placeholder { color: var(--text-muted); }
+    .ds-input:focus { border-color: var(--accent); outline: none; }
+
+    .ds-search-btn {
+        width: 100%;
+        padding: 7px 0;
+        border: none;
+        border-radius: 6px;
+        font-size: 0.8rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.15s;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+    }
+    .ds-search-btn.enabled {
+        background: linear-gradient(135deg, var(--green) 0%, var(--green-hover) 100%);
+        color: #fff;
+    }
+    .ds-search-btn.enabled:hover { background: linear-gradient(135deg, var(--green-hover) 0%, var(--green-bright) 100%); }
+    .ds-search-btn.disabled {
+        background: var(--border);
+        color: var(--text-muted);
+        cursor: not-allowed;
+    }
+
+    .ds-sidebar-hint {
+        font-size: 0.7rem;
+        color: var(--text-muted);
+        text-align: center;
+    }
+
+    .ds-sidebar-divider {
+        border: none;
+        border-top: 1px solid var(--border);
+        margin: 2px 0;
+    }
+
+    .ds-sidebar-alert {
+        font-size: 0.75rem;
+        padding: 8px 10px;
+        border-radius: 6px;
+        background: var(--bg-input);
+        border: 1px solid var(--border-muted);
+        color: var(--text-secondary);
+    }
+
+    .ds-sidebar-alert i { color: var(--gold); }
+
+    /* ====== Main Content ====== */
+    .ds-main {
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+    }
+
+    /* ====== Results Table ====== */
+    .ds-results-header {
+        flex-shrink: 0;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 8px 16px;
+        background: var(--bg-surface);
+        border-bottom: 1px solid var(--border);
+        min-height: 38px;
+    }
+
+    .ds-results-label {
+        font-size: 0.78rem;
+        font-weight: 600;
+        color: var(--text-secondary);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    .ds-results-count {
+        font-size: 0.72rem;
+        color: var(--accent);
+        background: var(--accent-bg-10);
+        padding: 2px 8px;
+        border-radius: 10px;
+    }
+
+    .ds-results-body {
+        flex: 1;
+        overflow-y: auto;
+        min-height: 0;
+    }
+
+    .ds-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.78rem;
+    }
+
+    .ds-table thead th {
+        position: sticky;
+        top: 0;
+        z-index: 2;
+        background: var(--bg-surface);
+        color: var(--text-secondary);
+        font-size: 0.7rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.4px;
+        padding: 6px 12px;
+        border-bottom: 1px solid var(--border);
+        white-space: nowrap;
+        user-select: none;
+    }
+
+    .ds-table tbody tr {
+        border-bottom: 1px solid var(--border);
+        cursor: pointer;
+        transition: background 0.1s;
+    }
+    .ds-table tbody tr:hover { background: var(--accent-bg-subtle); }
+    .ds-table tbody tr.ds-row-selected { background: var(--accent-bg); }
+
+    .ds-table tbody td {
+        padding: 5px 12px;
+        color: var(--text);
+        vertical-align: middle;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 300px;
+    }
+
+    .ds-type-badge {
+        display: inline-block;
+        padding: 1px 7px;
+        border-radius: 3px;
+        font-size: 0.65rem;
+        font-weight: 700;
+        letter-spacing: 0.3px;
+        text-transform: uppercase;
+    }
+    .ds-type-badge.pdf { background: var(--badge-pdf-bg); color: var(--badge-pdf-text); border: 1px solid var(--badge-pdf-border); }
+    .ds-type-badge.tiff { background: var(--badge-tiff-bg); color: var(--badge-tiff-text); border: 1px solid var(--badge-tiff-border); }
+    .ds-type-badge.other { background: var(--badge-other-bg); color: var(--badge-other-text); border: 1px solid var(--badge-other-border); }
+
+    .ds-status-dot {
+        display: inline-block;
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        margin-right: 5px;
+        vertical-align: middle;
+    }
+    .ds-status-dot.draft { background: var(--gold); }
+    .ds-status-dot.final { background: var(--green-bright); }
+    .ds-status-dot.archived { background: var(--text-secondary); }
+
+    .ds-view-btn {
+        padding: 2px 10px;
+        font-size: 0.68rem;
+        font-weight: 600;
+        border: 1px solid var(--border-muted);
+        border-radius: 4px;
+        background: transparent;
+        color: var(--accent);
+        cursor: pointer;
+        transition: all 0.15s;
+        white-space: nowrap;
+    }
+    .ds-view-btn:hover { background: var(--accent-bg-10); border-color: var(--accent); }
+
+    /* ====== Details Panel ====== */
+    .ds-details {
+        flex-shrink: 0;
+        border-top: 1px solid var(--border);
+        background: var(--bg-surface);
+        overflow: hidden;
+        transition: max-height 0.25s ease;
+    }
+    .ds-details.collapsed { max-height: 0; border-top: none; }
+    .ds-details.expanded { max-height: 320px; }
+
+    .ds-details-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 8px 16px;
+        border-bottom: 1px solid var(--border);
+    }
+
+    .ds-details-title {
+        font-size: 0.78rem;
+        font-weight: 600;
+        color: var(--text);
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+
+    .ds-details-close {
+        background: none;
+        border: 1px solid var(--border-muted);
+        color: var(--text-secondary);
+        padding: 1px 6px;
+        font-size: 0.72rem;
+        cursor: pointer;
+        border-radius: 4px;
+        transition: all 0.15s;
+    }
+    .ds-details-close:hover { color: var(--text); border-color: var(--text-muted); }
+
+    .ds-details-body {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 0;
+        overflow-y: auto;
+        max-height: 270px;
+    }
+
+    .ds-meta-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0;
+        padding: 10px 16px;
+    }
+
+    .ds-meta-cell {
+        padding: 5px 10px 5px 0;
+        border-bottom: 1px solid var(--border);
+    }
+
+    .ds-meta-label {
+        font-size: 0.65rem;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        font-weight: 600;
+        margin-bottom: 1px;
+    }
+
+    .ds-meta-value {
+        font-size: 0.82rem;
+        color: var(--text);
+        word-break: break-word;
+    }
+    .ds-meta-value.mono {
+        font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+        font-size: 0.78rem;
+        color: var(--text-secondary);
+    }
+
+    .ds-details-actions {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        padding: 10px 16px 10px 10px;
+        border-left: 1px solid var(--border);
+        justify-content: flex-start;
+        min-width: 140px;
+    }
+
+    .ds-action-btn {
+        padding: 6px 12px;
+        border-radius: 6px;
+        font-size: 0.75rem;
+        font-weight: 600;
+        cursor: pointer;
+        border: 1px solid transparent;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        transition: all 0.15s;
+        white-space: nowrap;
+        text-decoration: none;
+    }
+    .ds-action-btn.primary {
+        background: linear-gradient(135deg, var(--green) 0%, var(--green-hover) 100%);
+        color: #fff;
+    }
+    .ds-action-btn.primary:hover { background: linear-gradient(135deg, var(--green-hover) 0%, var(--green-bright) 100%); }
+    .ds-action-btn.secondary {
+        background: var(--border);
+        color: var(--text);
+        border-color: var(--border-muted);
+    }
+    .ds-action-btn.secondary:hover { background: var(--border-muted); }
+
+    /* ====== Empty / Loading States ====== */
+    .ds-empty {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        height: 100%;
+        color: var(--text-muted);
+        gap: 8px;
+        padding: 40px;
+    }
+    .ds-empty i { font-size: 2.5rem; opacity: 0.3; }
+    .ds-empty p { font-size: 0.82rem; margin: 0; }
+
+    .ds-spinner {
+        width: 28px;
+        height: 28px;
+        border: 3px solid var(--border);
+        border-top-color: var(--accent);
+        border-radius: 50%;
+        animation: ds-spin 0.7s linear infinite;
+    }
+    @@keyframes ds-spin { to { transform: rotate(360deg); } }
+
+    /* ====== Sort Headers ====== */
+    .ds-sortable { cursor: pointer; }
+    .ds-sortable:hover { color: var(--text); }
+    .ds-sortable i.ds-sort-icon { font-size: 0.55rem; margin-left: 3px; opacity: 0.4; }
+    .ds-sortable:hover i.ds-sort-icon { opacity: 1; }
+
+    /* ====== Highlight ====== */
+    .ds-highlight {
+        background: var(--highlight-bg);
+        color: var(--highlight-text);
+        padding: 0 1px;
+        border-radius: 2px;
+    }
+
+    /* ====== Focus Row ====== */
+    .ds-row-focused { outline: 1px solid var(--accent-ring); outline-offset: -1px; }
+
+    /* ====== Filter Chips ====== */
+    .ds-chips-bar {
+        flex-shrink: 0;
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        padding: 5px 16px;
+        background: var(--bg-body);
+        border-bottom: 1px solid var(--border);
+        flex-wrap: wrap;
+    }
+    .ds-chip {
+        padding: 2px 10px;
+        font-size: 0.68rem;
+        border: 1px solid var(--border-muted);
+        border-radius: 12px;
+        background: transparent;
+        color: var(--text-secondary);
+        cursor: pointer;
+        transition: all 0.15s;
+        display: inline-flex;
+        align-items: center;
+        gap: 3px;
+    }
+    .ds-chip:hover { border-color: var(--accent); color: var(--text); }
+    .ds-chip.active { background: var(--accent-bg-15); border-color: var(--accent); color: var(--accent); }
+    .ds-chip.clear { color: var(--text-muted); font-style: italic; }
+    .ds-chip.clear:hover { color: var(--red); border-color: var(--red); }
+    .ds-chip-sep { color: var(--border-muted); font-size: 0.7rem; margin: 0 2px; }
+
+    /* ====== Pagination ====== */
+    .ds-pagination {
+        flex-shrink: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        padding: 6px 16px;
+        background: var(--bg-surface);
+        border-top: 1px solid var(--border);
+    }
+    .ds-page-btn {
+        padding: 3px 8px;
+        font-size: 0.72rem;
+        border: 1px solid var(--border-muted);
+        border-radius: 4px;
+        background: transparent;
+        color: var(--text-secondary);
+        cursor: pointer;
+        transition: all 0.15s;
+    }
+    .ds-page-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--text); }
+    .ds-page-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+    .ds-page-info { font-size: 0.72rem; color: var(--text-secondary); margin: 0 4px; }
+    .ds-page-info strong { color: var(--text); }
+    .ds-page-size {
+        margin-left: 8px;
+        background: var(--bg-input);
+        border: 1px solid var(--border-muted);
+        border-radius: 4px;
+        color: var(--text);
+        font-size: 0.7rem;
+        padding: 2px 4px;
+    }
+
+    /* ====== Timing & Export ====== */
+    .ds-timing {
+        font-size: 0.65rem;
+        color: var(--text-muted);
+        font-family: monospace;
+    }
+    .ds-export-btn {
+        padding: 2px 8px;
+        font-size: 0.68rem;
+        border: 1px solid var(--border-muted);
+        border-radius: 4px;
+        background: transparent;
+        color: var(--text-secondary);
+        cursor: pointer;
+        transition: all 0.15s;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+    }
+    .ds-export-btn:hover { border-color: var(--accent); color: var(--text); }
+
+    /* ====== Recent Searches ====== */
+    .ds-recent-clear {
+        background: none;
+        border: none;
+        color: var(--text-muted);
+        font-size: 0.6rem;
+        cursor: pointer;
+        padding: 0;
+    }
+    .ds-recent-clear:hover { color: var(--red); }
+    .ds-recent-item {
+        width: 100%;
+        text-align: left;
+        padding: 3px 6px;
+        font-size: 0.72rem;
+        border: none;
+        border-radius: 4px;
+        background: transparent;
+        color: var(--text-secondary);
+        cursor: pointer;
+        transition: all 0.1s;
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .ds-recent-item:hover { background: var(--accent-bg); color: var(--text); }
+    .ds-recent-item i { font-size: 0.6rem; flex-shrink: 0; }
+
+    /* ====== Resize Handle ====== */
+    .ds-resize-handle {
+        height: 5px;
+        background: var(--border);
+        cursor: ns-resize;
+        transition: background 0.15s;
+        flex-shrink: 0;
+    }
+    .ds-resize-handle:hover { background: var(--accent); }
+
+    /* ====== Date Inputs ====== */
+    .ds-date-group { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
+    .ds-date-label { font-size: 0.6rem; color: var(--text-muted); }
+    input[type="date"].ds-input::-webkit-calendar-picker-indicator { filter: var(--date-picker-filter); }
+</style>
+
+<div class="ds-shell" @onkeydown="HandleGlobalKeydown" tabindex="-1">
+    <!-- Sidebar -->
+    <aside class="ds-sidebar">
+        <div>
+            <div class="ds-sidebar-title">Project</div>
+            @if (projects == null || projects.Count == 0)
+            {
+                <div class="ds-sidebar-alert">
+                    <i class="bi bi-exclamation-triangle me-1"></i> No project access
                 </div>
-                <div class="card-body">
-                    @* Project Selection Section *@
-                    <h6 class="card-subtitle mb-2 text-muted">Select Database</h6>
-                    @if (projects == null || projects.Count == 0)
+            }
+            else
+            {
+                <select class="ds-select" @bind="selectedProjectId" @bind:after="ProjectSelectionChanged">
+                    <option value="">Select project...</option>
+                    @foreach (var p in projects)
                     {
-                        <div class="alert alert-warning mb-3">
-                            <i class="bi bi-exclamation-triangle me-2"></i>
-                            <strong>No Project Access</strong>
-                            <p class="mb-0 small">You don't have access to any projects.</p>
-                        </div>
+                        <option value="@p.ProjectId">@p.ProjectName</option>
                     }
-                    else
-                    {
-                        <select class="form-select mb-3" @bind="selectedProjectId" @bind:after="ProjectSelectionChanged">
-                            <option value="">-- Select Project --</option>
-                            @foreach (var p in projects)
-                            {
-                                <option value="@p.ProjectId">@p.ProjectName</option>
-                            }
-                        </select>
-                    }
+                </select>
+            }
+        </div>
 
-                    <hr class="my-3" />
+        <hr class="ds-sidebar-divider" />
 
-                    @* Search Criteria Section *@
-                    <h6 class="card-subtitle mb-2 text-muted">Search Criteria</h6>
-                    @if (projects == null || projects.Count == 0)
-                    {
-                        <div class="alert alert-info">
-                            <i class="bi bi-info-circle me-2"></i>
-                            <span class="small">Projects needed for search.</span>
-                        </div>
-                    }
-                    else
-                    {
-                        <div class="mb-3">
-                            <label class="form-label small text-muted">Keywords</label>
-                            <input class="form-control" @bind="term" placeholder="Title, Author, or Doc Number" />
-                        </div>
-                        
-                        <button class="btn btn-primary w-100 mb-2" @onclick="Search" disabled="@(!selectedProjectId.HasValue)">
-                            @if (selectedProjectId.HasValue)
-                            {
-                                <i class="bi bi-search me-2"></i><span>Search</span>
-                            }
-                            else
-                            {
-                                <span>Select Project First</span>
-                            }
-                        </button>
-                        
-                        @if (!selectedProjectId.HasValue && projects.Count > 0)
-                        {
-                            <div class="text-center">
-                                <small class="text-muted">Please select a project to enable searching.</small>
-                            </div>
-                        }
-                    }
-                </div>
+        <div>
+            <div class="ds-sidebar-title">Search</div>
+            @if (projects != null && projects.Count > 0)
+            {
+                <input class="ds-input" @bind="term" @bind:event="oninput"
+                       @onkeydown="HandleSearchKeydown"
+                       placeholder="Title, author, doc number..." />
+            }
+        </div>
+
+        <hr class="ds-sidebar-divider" />
+
+        <div>
+            <div class="ds-sidebar-title">Date Range</div>
+            <div class="ds-date-group">
+                <span class="ds-date-label">From</span>
+                <input type="date" class="ds-input" @bind="filterFromDate" />
+                <span class="ds-date-label">To</span>
+                <input type="date" class="ds-input" @bind="filterToDate" />
             </div>
         </div>
 
-        @* ========================================================================
-           Right Column (70%): Results & Details
-           ========================================================================
-           Top: Search Results Table
-           Bottom: Document Viewer/Details
-        *@
-        
-        <div class="right-column d-flex flex-column gap-3 h-100">
-            @* Top Right: Search Results Panel *@
-            <div class="dashboard-panel flex-grow-1" style="flex-basis: 50%;">
-                <div class="card h-100">
-                    <div class="card-header bg-secondary text-white">
-                        <strong>Search Results</strong>
-                    </div>
-                    <div class="card-body p-0 panel-scroll">
-                        @if (isLoading)
-                        {
-                            <div class="d-flex justify-content-center my-3">
-                                <div class="spinner-border text-primary" role="status">
-                                    <span class="visually-hidden">Loading...</span>
-                                </div>
-                            </div>
-                        }
-                        else if (errorMessage != null)
-                        {
-                            <div class="alert alert-danger m-3">@errorMessage</div>
-                        }
-                        else if (results is null)
-                        {
-                            <div class="p-3 text-secondary">Try a search to see documents.</div>
-                        }
-                        else if (results.Count == 0)
-                        {
-                            <div class="p-3">No results.</div>
-                        }
-                        else
-                        {
-                            <table class="table table-sm table-striped mb-0 sticky-header">
-                                <thead>
-                                    <tr>
-                                        <th>Document Number</th>
-                                        <th>Title</th>
-                                        <th>Author</th>
-                                        <th>Type</th>
-                                        <th>Status</th>
-                                        <th>Created</th>
-                                        <th>Action</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    @foreach (var d in results)
-                                    {
-                                        <tr>
-                                            <td>@d.DocumentNumber</td>
-                                            <td>@d.Title</td>
-                                            <td>@d.Author</td>
-                                            <td>@d.DocumentType</td>
-                                            <td>@d.Status</td>
-                                            <td>@d.CreatedOn.ToString("yyyy-MM-dd")</td>
-                                            <td>
-                                                <button class="btn btn-sm btn-outline-primary"
-                                                        @onclick="() => ShowDetails(d.DocumentId)">
-                                                    Details
-                                                </button>
-                                            </td>
-                                        </tr>
-                                    }
-                                </tbody>
-                            </table>
-                        }
-                    </div>
-                </div>
-            </div>
+        <button class="ds-search-btn @(selectedProjectId.HasValue ? "enabled" : "disabled")"
+                @onclick="Search" disabled="@(!selectedProjectId.HasValue)">
+            <i class="bi bi-search"></i> Search
+        </button>
 
-            @* Bottom Right: Document Details/Viewer *@
-            <div class="dashboard-panel flex-grow-1" style="flex-basis: 50%;">
-                <div class="card h-100">
-                    <div class="card-header bg-secondary text-white">
-                        <strong>Document Details</strong>
-                    </div>
-                    <div class="card-body p-0 panel-scroll">
-                        @if (selectedDocumentId is not null)
-                        {
-                            <iframe src="@(string.IsNullOrEmpty(viewDocumentSchemaName) ? $"/viewdoc/{selectedDocumentId}" : $"/viewdoc/{viewDocumentSchemaName}/{selectedDocumentId}")"
-                                    style="width:100%;height:100%;border:none;"></iframe>
-                        }
-                        else
-                        {
-                            <div class="d-flex align-items-center justify-content-center h-100 text-muted">
-                                <div class="text-center">
-                                    <i class="bi bi-file-earmark-text display-4 opacity-25"></i>
-                                    <p class="mt-2">Select a document to view details.</p>
-                                </div>
-                            </div>
-                        }
-                    </div>
+        @if (!selectedProjectId.HasValue && projects is { Count: > 0 })
+        {
+            <div class="ds-sidebar-hint">Select a project to search</div>
+        }
+
+        @if (recentSearches.Count > 0)
+        {
+            <hr class="ds-sidebar-divider" />
+            <div>
+                <div class="ds-sidebar-title" style="display:flex;justify-content:space-between;align-items:center;">
+                    Recent
+                    <button class="ds-recent-clear" @onclick="ClearRecentSearches">Clear</button>
                 </div>
+                @foreach (var rs in recentSearches)
+                {
+                    <button class="ds-recent-item" @onclick="() => UseRecentSearch(rs)">
+                        <i class="bi bi-clock-history"></i> @rs
+                    </button>
+                }
+            </div>
+        }
+    </aside>
+
+    <!-- Main Content -->
+    <div class="ds-main">
+        <!-- Results Header -->
+        <div class="ds-results-header">
+            <div style="display:flex;align-items:center;gap:12px;">
+                <span class="ds-results-label"><i class="bi bi-list-ul me-1"></i>Results</span>
+                @if (results != null)
+                {
+                    <span class="ds-results-count">@totalCount document@(totalCount != 1 ? "s" : "")</span>
+                    @if (searchDurationMs > 0)
+                    {
+                        <span class="ds-timing">@searchDurationMs ms</span>
+                    }
+                }
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;">
+                @if (displayResults.Count > 0)
+                {
+                    <button class="ds-export-btn" @onclick="ExportCsv" title="Export to CSV">
+                        <i class="bi bi-download"></i> CSV
+                    </button>
+                }
             </div>
         </div>
 
+        <!-- Filter Chips -->
+        @if (results != null && results.Count > 0 && (distinctTypes.Count > 1 || distinctStatuses.Count > 1))
+        {
+            <div class="ds-chips-bar">
+                @foreach (var t in distinctTypes)
+                {
+                    var active = chipType == t;
+                    <button class="ds-chip @(active ? "active" : "")" @onclick="() => ToggleChipType(t)">
+                        @t @if (active) { <i class="bi bi-x"></i> }
+                    </button>
+                }
+                @if (distinctTypes.Count > 1 && distinctStatuses.Count > 1)
+                {
+                    <span class="ds-chip-sep">|</span>
+                }
+                @foreach (var s in distinctStatuses)
+                {
+                    var active = chipStatus == s;
+                    <button class="ds-chip @(active ? "active" : "")" @onclick="() => ToggleChipStatus(s)">
+                        @s @if (active) { <i class="bi bi-x"></i> }
+                    </button>
+                }
+                @if (chipType != null || chipStatus != null)
+                {
+                    <button class="ds-chip clear" @onclick="ClearChips">Clear filters</button>
+                }
+            </div>
+        }
+
+        <!-- Results Table -->
+        <div class="ds-results-body" tabindex="-1" @onkeydown="HandleTableKeydown">
+            @if (isLoading)
+            {
+                <div class="ds-empty"><div class="ds-spinner"></div><p>Searching...</p></div>
+            }
+            else if (errorMessage != null)
+            {
+                <div class="ds-empty" style="color:#f85149;">
+                    <i class="bi bi-exclamation-triangle"></i><p>@errorMessage</p>
+                </div>
+            }
+            else if (results is null)
+            {
+                <div class="ds-empty"><i class="bi bi-search"></i><p>Run a search to find documents</p></div>
+            }
+            else if (results.Count == 0)
+            {
+                <div class="ds-empty"><i class="bi bi-inbox"></i><p>No documents match your search</p></div>
+            }
+            else
+            {
+                <table class="ds-table">
+                    <thead>
+                        <tr>
+                            <th class="ds-sortable" @onclick='() => SortBy("DocumentNumber")'>
+                                Document <i class="bi @SortIcon("DocumentNumber") ds-sort-icon"></i>
+                            </th>
+                            <th class="ds-sortable" @onclick='() => SortBy("Title")'>
+                                Title <i class="bi @SortIcon("Title") ds-sort-icon"></i>
+                            </th>
+                            <th class="ds-sortable" @onclick='() => SortBy("Author")'>
+                                Author <i class="bi @SortIcon("Author") ds-sort-icon"></i>
+                            </th>
+                            <th class="ds-sortable" style="width:60px;text-align:center;" @onclick='() => SortBy("DocumentType")'>
+                                Type <i class="bi @SortIcon("DocumentType") ds-sort-icon"></i>
+                            </th>
+                            <th class="ds-sortable" @onclick='() => SortBy("Status")'>
+                                Status <i class="bi @SortIcon("Status") ds-sort-icon"></i>
+                            </th>
+                            <th class="ds-sortable" @onclick='() => SortBy("CreatedOn")'>
+                                Created <i class="bi @SortIcon("CreatedOn") ds-sort-icon"></i>
+                            </th>
+                            <th style="width:70px;text-align:center;">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @{ var rowIdx = 0; }
+                        @foreach (var d in displayResults)
+                        {
+                            var isSelected = selectedDocument?.DocumentId == d.DocumentId;
+                            var isFocused = rowIdx == focusedRowIndex;
+                            <tr class="@(isSelected ? "ds-row-selected" : "") @(isFocused ? "ds-row-focused" : "")"
+                                @onclick="() => ShowDetails(d.DocumentId)">
+                                <td style="font-family:monospace;font-size:0.72rem;color:#8b949e;">@(HighlightTerm(d.DocumentNumber))</td>
+                                <td>@(HighlightTerm(d.Title))</td>
+                                <td style="color:#8b949e;">@(HighlightTerm(d.Author))</td>
+                                <td style="text-align:center;">
+                                    @{ var typeLower = (d.DocumentType ?? "").ToLowerInvariant(); }
+                                    <span class="ds-type-badge @(typeLower == "pdf" ? "pdf" : typeLower == "tiff" ? "tiff" : "other")">
+                                        @d.DocumentType
+                                    </span>
+                                </td>
+                                <td>
+                                    @{ var statusLower = (d.Status ?? "").ToLowerInvariant(); }
+                                    <span class="ds-status-dot @(statusLower == "draft" ? "draft" : statusLower == "final" ? "final" : "archived")"></span>
+                                    @d.Status
+                                </td>
+                                <td style="color:#8b949e;">@d.CreatedOn.ToString("yyyy-MM-dd")</td>
+                                <td style="text-align:center;">
+                                    <button class="ds-view-btn" @onclick="() => ShowDetails(d.DocumentId)" @onclick:stopPropagation="true">
+                                        View
+                                    </button>
+                                </td>
+                            </tr>
+                            rowIdx++;
+                        }
+                    </tbody>
+                </table>
+            }
+        </div>
+
+        <!-- Pagination -->
+        @if (totalPages > 1)
+        {
+            <div class="ds-pagination">
+                <button class="ds-page-btn" disabled="@(currentPage <= 1)" @onclick="() => GoToPage(1)" title="First page">
+                    <i class="bi bi-chevron-double-left"></i>
+                </button>
+                <button class="ds-page-btn" disabled="@(currentPage <= 1)" @onclick="() => GoToPage(currentPage - 1)" title="Previous page">
+                    <i class="bi bi-chevron-left"></i>
+                </button>
+                <span class="ds-page-info">Page <strong>@currentPage</strong> of <strong>@totalPages</strong></span>
+                <button class="ds-page-btn" disabled="@(currentPage >= totalPages)" @onclick="() => GoToPage(currentPage + 1)" title="Next page">
+                    <i class="bi bi-chevron-right"></i>
+                </button>
+                <button class="ds-page-btn" disabled="@(currentPage >= totalPages)" @onclick="() => GoToPage(totalPages)" title="Last page">
+                    <i class="bi bi-chevron-double-right"></i>
+                </button>
+                <select class="ds-page-size" @bind="pageSize" @bind:after="PageSizeChanged" title="Results per page">
+                    <option value="25">25</option>
+                    <option value="50">50</option>
+                    <option value="100">100</option>
+                </select>
+            </div>
+        }
+
+        <!-- Document Details Panel -->
+        <div class="ds-details @(selectedDocument != null ? "expanded" : "collapsed")">
+            @if (selectedDocument != null)
+            {
+                <div class="ds-resize-handle" title="Drag to resize"></div>
+                <div class="ds-details-header">
+                    <div class="ds-details-title">
+                        <i class="bi bi-file-earmark-text"></i>
+                        @selectedDocument.Title
+                    </div>
+                    <button class="ds-details-close" @onclick="CloseDetails" title="Close (Esc)">
+                        <i class="bi bi-x-lg"></i>
+                    </button>
+                </div>
+                <div class="ds-details-body">
+                    <div class="ds-meta-grid">
+                        <div class="ds-meta-cell">
+                            <div class="ds-meta-label">Document Number</div>
+                            <div class="ds-meta-value mono">@selectedDocument.DocumentNumber</div>
+                        </div>
+                        <div class="ds-meta-cell">
+                            <div class="ds-meta-label">Type</div>
+                            <div class="ds-meta-value">
+                                @{ var detTypeLower = (selectedDocument.DocumentType ?? "").ToLowerInvariant(); }
+                                <span class="ds-type-badge @(detTypeLower == "pdf" ? "pdf" : detTypeLower == "tiff" ? "tiff" : "other")">
+                                    @selectedDocument.DocumentType
+                                </span>
+                            </div>
+                        </div>
+                        <div class="ds-meta-cell">
+                            <div class="ds-meta-label">Status</div>
+                            <div class="ds-meta-value">
+                                @{ var detStatusLower = (selectedDocument.Status ?? "").ToLowerInvariant(); }
+                                <span class="ds-status-dot @(detStatusLower == "draft" ? "draft" : detStatusLower == "final" ? "final" : "archived")"></span>
+                                @selectedDocument.Status
+                            </div>
+                        </div>
+                        <div class="ds-meta-cell">
+                            <div class="ds-meta-label">Author</div>
+                            <div class="ds-meta-value">@(string.IsNullOrEmpty(selectedDocument.Author) ? "—" : selectedDocument.Author)</div>
+                        </div>
+                        <div class="ds-meta-cell">
+                            <div class="ds-meta-label">Project</div>
+                            <div class="ds-meta-value">@(selectedProject?.ProjectName ?? "—") <span style="color:#484f58;">(@(selectedProject?.ProjectCode ?? ""))</span></div>
+                        </div>
+                        <div class="ds-meta-cell">
+                            <div class="ds-meta-label">Classification</div>
+                            <div class="ds-meta-value">@(string.IsNullOrEmpty(selectedDocument.Classification) ? "—" : selectedDocument.Classification)</div>
+                        </div>
+                        <div class="ds-meta-cell">
+                            <div class="ds-meta-label">Created</div>
+                            <div class="ds-meta-value">@selectedDocument.CreatedOn.ToString("dd MMM yyyy, HH:mm")</div>
+                        </div>
+                        <div class="ds-meta-cell">
+                            <div class="ds-meta-label">Document ID</div>
+                            <div class="ds-meta-value mono">@selectedDocument.DocumentId</div>
+                        </div>
+                    </div>
+                    <div class="ds-details-actions">
+                        @if (selectedDocument.DocumentType!.Equals("PDF", StringComparison.OrdinalIgnoreCase))
+                        {
+                            <a class="ds-action-btn primary" href="/viewpdf/@selectedDocument.PublicToken" target="_blank">
+                                <i class="bi bi-eye"></i> View Document
+                            </a>
+                        }
+                        else
+                        {
+                            <a class="ds-action-btn primary" href="/viewtiff/@selectedDocument.PublicToken" target="_blank">
+                                <i class="bi bi-eye"></i> View Document
+                            </a>
+                        }
+                        <a class="ds-action-btn secondary" href="/viewdoc/@selectedDocument.PublicToken" target="_blank">
+                            <i class="bi bi-box-arrow-up-right"></i> Open Details
+                        </a>
+                    </div>
+                </div>
+            }
+        </div>
     </div>
 </div>
 
-@* ============================================================================
-   CSS Styling for the Dashboard Layout
-   ============================================================================ *@
-<style>
-    .document-search-container {
-        width: 100%;
-        height: 100%; /* Fill available space in content area */
-        padding: 0;
-        margin: 0;
-        overflow: hidden;
-    }
-
-    .dashboard-grid {
-        display: grid;
-        grid-template-columns: 30% 70%; /* Left: 30%, Right: 70% */
-        grid-template-rows: 1fr; /* Single row, internal split for right column */
-        gap: 12px;
-        height: 100%;
-        width: 100%;
-        padding: 12px;
-        margin: 0;
-        box-sizing: border-box;
-    }
-
-    .dashboard-panel {
-        min-width: 0;
-        min-height: 0;
-        display: flex;
-        flex-direction: column;
-    }
-    
-    .left-panel {
-        height: 100%;
-    }
-
-    .card.h-100 {
-        height: 100%;
-        display: flex;
-        flex-direction: column;
-        margin: 0;
-        border-radius: 8px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    }
-
-    .panel-scroll {
-        flex: 1 1 auto;
-        overflow: auto;
-        min-height: 0;
-    }
-
-    .card-header {
-        flex-shrink: 0;
-        padding: 10px 16px;
-        font-weight: 600;
-        font-size: 0.95rem;
-    }
-
-    .card-body {
-        flex: 1 1 auto;
-        padding: 16px;
-        overflow: hidden;
-        display: flex;
-        flex-direction: column;
-    }
-
-    .card-body.p-0 {
-        padding: 0 !important;
-    }
-
-    /* Ensure the table takes full height in search results */
-    .table {
-        margin: 0;
-        font-size: 0.85rem;
-    }
-    
-    .sticky-header th {
-        position: sticky;
-        top: 0;
-        background-color: #fff;
-        z-index: 10;
-        box-shadow: 0 1px 2px rgba(0,0,0,0.1);
-    }
-</style>
-
 @code {
+    // ====== Search State ======
     string? term;
     List<Document>? results;
     List<Project>? projects;
     int? selectedProjectId;
-    int? selectedDocumentId;
+    string? selectedDocumentToken;
     string? selectedSchemaName;
     bool isLoading = false;
     string? errorMessage;
 
     // User information
     private string? currentUsername;
-    private ApplicationUser? currentUser; 
+    private ApplicationUser? currentUser;
 
+    // Selected document for inline detail panel
+    private Document? selectedDocument;
+    private Project? selectedProject => projects?.FirstOrDefault(p => p.ProjectId == selectedProjectId);
+
+    // ====== Sorting (server-side) ======
+    private string sortColumn = "CreatedOn";
+    private string sortDirection = "desc";
+
+    // ====== Pagination (server-side) ======
+    private int currentPage = 1;
+    private int pageSize = 50;
+    private int totalCount = 0;
+    private int totalPages => totalCount > 0 ? (int)Math.Ceiling((double)totalCount / pageSize) : 0;
+
+    // ====== Filters ======
+    private DateTime? filterFromDate;
+    private DateTime? filterToDate;
+
+    // ====== Client-side chip filters ======
+    private string? chipType;
+    private string? chipStatus;
+
+    // ====== Search timing ======
+    private long searchDurationMs;
+
+    // ====== Keyboard navigation ======
+    private int focusedRowIndex = -1;
+
+    // ====== Recent searches ======
+    private List<string> recentSearches = new();
+    private const string RecentSearchKey = "dv_recent_searches";
+
+    // ====== Resize ======
+    private bool resizeInitialized;
+
+    // ====== Computed properties ======
+    private List<Document> displayResults
+    {
+        get
+        {
+            if (results == null) return new();
+            var filtered = results.AsEnumerable();
+            if (!string.IsNullOrEmpty(chipType))
+                filtered = filtered.Where(d => string.Equals(d.DocumentType, chipType, StringComparison.OrdinalIgnoreCase));
+            if (!string.IsNullOrEmpty(chipStatus))
+                filtered = filtered.Where(d => string.Equals(d.Status, chipStatus, StringComparison.OrdinalIgnoreCase));
+            return filtered.ToList();
+        }
+    }
+
+    private List<string> distinctTypes => results?
+        .Select(d => d.DocumentType ?? "").Where(t => !string.IsNullOrEmpty(t))
+        .Distinct().OrderBy(t => t).ToList() ?? new();
+
+    private List<string> distinctStatuses => results?
+        .Select(d => d.Status ?? "").Where(s => !string.IsNullOrEmpty(s))
+        .Distinct().OrderBy(s => s).ToList() ?? new();
+
+    // ====== Lifecycle ======
     protected override async Task OnInitializedAsync()
     {
         isLoading = true;
@@ -320,18 +928,14 @@
 
         try
         {
-            // Get the current user
             var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
             currentUsername = authState.User.Identity?.Name;
 
             if (!string.IsNullOrEmpty(currentUsername))
             {
-                // Fetch the ApplicationUser object from DB primarily for UserId access (needed for Auditing)
-                // Note: Authorization logic does NOT depend on this DB user object anymore.
                 currentUser = await UserService.GetUserByUsernameAsync(currentUsername);
 
-                // Initialize session
-                 try
+                try
                 {
                     var sessionService = ServiceProvider.GetRequiredService<SessionManagementService>();
                     await sessionService.InitializeSessionAsync(currentUsername, null);
@@ -341,20 +945,12 @@
                     Console.WriteLine($"DocumentSearch: Session initialization FAILED: {sessionEx.Message}");
                 }
 
-                // ==============================================================================
-                // UPDATED AUTHORIZATION: AD Group Based Access
-                // ==============================================================================
-                // 1. DV_Web authorization relies strictly on AD Group association.
-                // 2. We use Repo.GetProjectsForUserAsync(ClaimsPrincipal) to filter projects
-                //    by matching Claims against Project.Principal.
-                // ==============================================================================
-                
                 projects = (await Repo.GetProjectsForUserAsync(authState.User)).ToList();
                 Console.WriteLine($"DocumentSearch: Loaded {projects.Count} projects for {currentUsername} via AD Group Association.");
-                
+
                 if (projects.Count == 0)
                 {
-                     Console.WriteLine($"DocumentSearch: WARNING: User {currentUsername} has 0 projects. Check 'ReadPrincipal'/'EditPrincipal' fields in Projects table vs User Claims.");
+                    Console.WriteLine($"DocumentSearch: WARNING: User {currentUsername} has 0 projects.");
                 }
             }
             else
@@ -375,28 +971,51 @@
         }
     }
 
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await LoadRecentSearches();
+            StateHasChanged();
+        }
+
+        if (selectedDocument != null && !resizeInitialized)
+        {
+            try
+            {
+                await JS.InvokeVoidAsync("DocSearch.initResize", ".ds-resize-handle", ".ds-details", 80, 500);
+                resizeInitialized = true;
+            }
+            catch { }
+        }
+        else if (selectedDocument == null)
+        {
+            resizeInitialized = false;
+        }
+    }
+
+    // ====== Search ======
     async Task Search()
     {
         isLoading = true;
         errorMessage = null;
+        currentPage = 1;
+        chipType = null;
+        chipStatus = null;
+        focusedRowIndex = -1;
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
 
         try
         {
-            // Validate that a project is selected
             if (!selectedProjectId.HasValue)
             {
                 errorMessage = "Please select a project before searching.";
                 return;
             }
 
-            // Security Check: Ensure selectedProjectId is in the loaded projects list.
-            // Since 'projects' is filtered by AD Group access in OnInitializedAsync,
-            // this check prevents tampering with the dropdown value.
             if (projects == null || !projects.Any(p => p.ProjectId == selectedProjectId.Value))
             {
                 errorMessage = "Unauthorized project access.";
-                
                 await AuditService.LogProjectAccessAsync(
                     currentUsername ?? "Unknown",
                     currentUser?.UserId ?? 0,
@@ -407,15 +1026,15 @@
                 return;
             }
 
-            // Perform the search
             Console.WriteLine($"Searching with ProjectId: {selectedProjectId}, Schema: {selectedSchemaName}");
 
-            var page = 1;
-            var pageSize = 25;
-            results = (await Repo.SearchAsync("DefaultConnection", term, page, pageSize, selectedProjectId)).ToList();
-            selectedDocumentId = null;
-            
+            await ExecuteSearch();
+
             stopwatch.Stop();
+            searchDurationMs = stopwatch.ElapsedMilliseconds;
+
+            // Save to recent searches
+            await SaveRecentSearch(term);
 
             // Log the search activity
             await AuditService.LogSearchAsync(
@@ -423,15 +1042,15 @@
                 currentUser?.UserId,
                 selectedProjectId.Value,
                 term ?? "",
-                results.Count,
-                stopwatch.ElapsedMilliseconds);
+                totalCount,
+                searchDurationMs);
         }
         catch (Exception ex)
         {
             errorMessage = $"Error searching documents: {ex.Message}";
             results = new List<Document>();
-            
-            // Log the search error
+            totalCount = 0;
+
             await AuditService.LogSecurityEventAsync(
                 currentUsername ?? "Unknown",
                 currentUser?.UserId,
@@ -445,55 +1064,265 @@
         }
     }
 
+    private async Task ExecuteSearch()
+    {
+        var (docs, count) = await Repo.SearchWithMetadataAsync(
+            "DefaultConnection", term, currentPage, pageSize, selectedProjectId,
+            documentType: null, status: null,
+            fromDate: filterFromDate, toDate: filterToDate,
+            sortColumn: sortColumn, sortDirection: sortDirection);
+
+        results = docs;
+        totalCount = count;
+        selectedDocumentToken = null;
+        selectedDocument = null;
+        focusedRowIndex = -1;
+    }
+
+    // ====== Sorting ======
+    async Task SortBy(string column)
+    {
+        if (results == null) return;
+
+        if (sortColumn == column)
+            sortDirection = sortDirection == "asc" ? "desc" : "asc";
+        else
+        {
+            sortColumn = column;
+            sortDirection = "asc";
+        }
+
+        currentPage = 1;
+        isLoading = true;
+        try { await ExecuteSearch(); }
+        catch (Exception ex) { errorMessage = $"Sort failed: {ex.Message}"; }
+        finally { isLoading = false; }
+    }
+
+    string SortIcon(string column)
+    {
+        if (sortColumn != column) return "bi-chevron-expand";
+        return sortDirection == "asc" ? "bi-chevron-up" : "bi-chevron-down";
+    }
+
+    // ====== Pagination ======
+    async Task GoToPage(int page)
+    {
+        currentPage = Math.Max(1, Math.Min(page, totalPages));
+        isLoading = true;
+        try { await ExecuteSearch(); }
+        catch (Exception ex) { errorMessage = $"Error: {ex.Message}"; }
+        finally { isLoading = false; }
+    }
+
+    async Task PageSizeChanged()
+    {
+        currentPage = 1;
+        if (results != null)
+        {
+            isLoading = true;
+            try { await ExecuteSearch(); }
+            catch (Exception ex) { errorMessage = $"Error: {ex.Message}"; }
+            finally { isLoading = false; }
+        }
+    }
+
+    // ====== Filter Chips (client-side) ======
+    void ToggleChipType(string type)
+    {
+        chipType = chipType == type ? null : type;
+        focusedRowIndex = -1;
+    }
+
+    void ToggleChipStatus(string status)
+    {
+        chipStatus = chipStatus == status ? null : status;
+        focusedRowIndex = -1;
+    }
+
+    void ClearChips()
+    {
+        chipType = null;
+        chipStatus = null;
+        focusedRowIndex = -1;
+    }
+
+    // ====== Keyboard Navigation ======
+    async Task HandleSearchKeydown(Microsoft.AspNetCore.Components.Web.KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && selectedProjectId.HasValue)
+        {
+            await Search();
+        }
+    }
+
+    void HandleGlobalKeydown(Microsoft.AspNetCore.Components.Web.KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape")
+        {
+            CloseDetails();
+        }
+    }
+
+    async Task HandleTableKeydown(Microsoft.AspNetCore.Components.Web.KeyboardEventArgs e)
+    {
+        var items = displayResults;
+        if (items.Count == 0) return;
+
+        if (e.Key == "ArrowDown")
+        {
+            focusedRowIndex = Math.Min(focusedRowIndex + 1, items.Count - 1);
+            await JS.InvokeVoidAsync("DocSearch.scrollRowIntoView", focusedRowIndex);
+        }
+        else if (e.Key == "ArrowUp")
+        {
+            focusedRowIndex = Math.Max(focusedRowIndex - 1, 0);
+            await JS.InvokeVoidAsync("DocSearch.scrollRowIntoView", focusedRowIndex);
+        }
+        else if (e.Key == "Enter" && focusedRowIndex >= 0 && focusedRowIndex < items.Count)
+        {
+            ShowDetails(items[focusedRowIndex].DocumentId);
+        }
+    }
+
+    // ====== Details ======
     string? viewDocumentSchemaName;
 
     void ShowDetails(int documentId)
     {
-        selectedDocumentId = documentId;
-        var doc = results?.FirstOrDefault(d => d.DocumentId == documentId);
+        var doc = (displayResults).FirstOrDefault(d => d.DocumentId == documentId);
         if (doc != null)
         {
+            selectedDocument = doc;
+            selectedDocumentToken = doc.PublicToken;
             viewDocumentSchemaName = doc.SchemaName;
-            Console.WriteLine($"ShowDetails: DocumentId={documentId}, SchemaName='{doc.SchemaName}'");
-        }
-        else 
-        {
-            Console.WriteLine($"ShowDetails: DocumentId={documentId}, Document NOT FOUND in results.");
+            resizeInitialized = false; // re-init resize for new panel render
         }
     }
 
-    private void ProjectSelectionChanged()
+    void CloseDetails()
+    {
+        selectedDocument = null;
+        selectedDocumentToken = null;
+    }
+
+    // ====== Recent Searches ======
+    async Task LoadRecentSearches()
+    {
+        try { recentSearches = await JS.InvokeAsync<List<string>>("DocSearch.getRecentSearches", RecentSearchKey); }
+        catch { recentSearches = new(); }
+    }
+
+    async Task SaveRecentSearch(string? searchTerm)
+    {
+        if (!string.IsNullOrWhiteSpace(searchTerm))
+        {
+            try
+            {
+                await JS.InvokeVoidAsync("DocSearch.addRecentSearch", RecentSearchKey, searchTerm, 8);
+                await LoadRecentSearches();
+            }
+            catch { }
+        }
+    }
+
+    async Task UseRecentSearch(string searchTerm)
+    {
+        term = searchTerm;
+        await Search();
+    }
+
+    async Task ClearRecentSearches()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("DocSearch.clearRecentSearches", RecentSearchKey);
+            recentSearches = new();
+        }
+        catch { }
+    }
+
+    // ====== CSV Export ======
+    async Task ExportCsv()
+    {
+        var items = displayResults;
+        if (items.Count == 0) return;
+
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("Document Number,Title,Author,Type,Status,Classification,Created");
+        foreach (var d in items)
+        {
+            sb.AppendLine($"\"{CsvEscape(d.DocumentNumber)}\",\"{CsvEscape(d.Title)}\",\"{CsvEscape(d.Author)}\",\"{CsvEscape(d.DocumentType)}\",\"{CsvEscape(d.Status)}\",\"{CsvEscape(d.Classification)}\",\"{d.CreatedOn:yyyy-MM-dd}\"");
+        }
+
+        var filename = $"search-results-{DateTime.Now:yyyyMMdd-HHmmss}.csv";
+        await JS.InvokeVoidAsync("DocSearch.exportCsv", sb.ToString(), filename);
+    }
+
+    static string CsvEscape(string? v) => (v ?? "").Replace("\"", "\"\"");
+
+    // ====== Search Term Highlighting ======
+    MarkupString HighlightTerm(string? text)
+    {
+        if (string.IsNullOrEmpty(text))
+            return new MarkupString("—");
+
+        var encoded = System.Net.WebUtility.HtmlEncode(text);
+
+        if (string.IsNullOrWhiteSpace(term))
+            return new MarkupString(encoded);
+
+        var escapedTerm = System.Text.RegularExpressions.Regex.Escape(
+            System.Net.WebUtility.HtmlEncode(term));
+
+        var highlighted = System.Text.RegularExpressions.Regex.Replace(
+            encoded,
+            escapedTerm,
+            m => $"<mark class=\"ds-highlight\">{m.Value}</mark>",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+        return new MarkupString(highlighted);
+    }
+
+    // ====== Project Selection ======
+    private async Task ProjectSelectionChanged()
     {
         if (selectedProjectId.HasValue && projects != null)
         {
-            var selectedProject = projects.FirstOrDefault(p => p.ProjectId == selectedProjectId.Value);
-            if (selectedProject != null)
+            var proj = projects.FirstOrDefault(p => p.ProjectId == selectedProjectId.Value);
+            if (proj != null)
             {
-                selectedSchemaName = selectedProject.SchemaName;
+                selectedSchemaName = proj.SchemaName;
                 Console.WriteLine($"Project selected: {selectedProjectId}, Schema: {selectedSchemaName}");
-                
-                // Update global state for NavMenu
+
+                var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+                var hasEditAccess = await Repo.HasProjectEditAccessAsync(authState.User, proj.ProjectId);
+
                 ProjectSelectionState.SetProject(
-                    selectedProject.ProjectId, 
-                    selectedProject.ProjectName, 
-                    selectedProject.EditPrincipal);
+                    proj.ProjectId,
+                    proj.ProjectName,
+                    proj.EditPrincipal,
+                    proj.SchemaName,
+                    hasEditAccess);
             }
             else
             {
                 selectedSchemaName = null;
-                Console.WriteLine("Selected project not found");
                 ProjectSelectionState.SetProject(null, null, null);
             }
         }
         else
         {
             selectedSchemaName = null;
-            Console.WriteLine("No project selected");
             ProjectSelectionState.SetProject(null, null, null);
         }
 
-        // Clear previous results when project changes
         results = null;
-        selectedDocumentId = null;
+        selectedDocumentToken = null;
+        selectedDocument = null;
+        totalCount = 0;
+        searchDurationMs = 0;
+        chipType = null;
+        chipStatus = null;
     }
 }

@@ -1,30 +1,10 @@
-﻿@* 
-   ============================================================================
-   ViewTiff.razor - OpenSeadragon TIFF Viewer Component
-   ============================================================================
-   
-   Purpose: Displays TIFF documents using OpenSeadragon deep zoom viewer.
-   Provides high-quality viewing with pan, zoom, and multi-page navigation.
-   
-   Created: [Date]
-   Last Updated: October 20, 2025
-   
-   Dependencies:
-   - OpenSeadragon 4.1.0+ for deep zoom viewing
-   - DocumentRepository: Handles database interactions for fetching document pages
-   - DocumentPage: Represents the model for individual pages of a document
-   - Bootstrap 5.x for styling
-*@
-
-@page "/viewtiff/{TiffDocId:int}"
-@page "/viewtiff/{Schema}/{TiffDocId:int}"
-@* Defines the route for this page with schema and TIFF document ID parameters *@
+﻿@page "/viewtiff/{Token}"
+@page "/viewtiff/{Schema}/{Token}"
 
 @using DV.Shared.Models
 @using DV.Web.Services
 @using DV.Shared.Security
 @using DV.Web.Components.Layout
-@using DV.Web.Components.Documents
 @using Microsoft.AspNetCore.Authorization
 @using Microsoft.AspNetCore.Components.Authorization
 @using Microsoft.JSInterop
@@ -35,168 +15,869 @@
 @inject IJSRuntime JSRuntime
 
 @attribute [Authorize]
-
 @rendermode InteractiveServer
-@* Enables interactive server-side rendering *@
+@implements IAsyncDisposable
 
-<PageTitle>TIFF Viewer - OpenSeadragon</PageTitle> @* Sets the page title *@
+<PageTitle>Document Viewer</PageTitle>
 
-<div class="container-fluid p-0" style="height: 100vh; display: flex; flex-direction: column;">
-    @* Main container for the TIFF viewer *@
-    @if (isLoading) @* Check if the data is still loading *@
+<style>
+    .dv-viewer-container {
+        display: flex;
+        flex-direction: column;
+        height: calc(100vh - 64px);
+        background: #1a1a2e;
+        color: #e0e0e0;
+        margin: -1rem -1.5rem 0 -1.5rem;
+        width: calc(100% + 3rem);
+    }
+
+    .dv-viewer-container:fullscreen {
+        height: 100vh;
+        margin: 0;
+        width: 100%;
+    }
+
+    .dv-toolbar {
+        flex-shrink: 0;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 5px 12px;
+        background: #1e1e2e;
+        border-bottom: 1px solid #333;
+        gap: 6px;
+        flex-wrap: nowrap;
+        min-height: 42px;
+    }
+
+    .dv-toolbar .tb-section {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+    }
+
+    .dv-toolbar .tb-label {
+        font-size: 0.82rem;
+        color: #aaa;
+        white-space: nowrap;
+    }
+
+    .dv-toolbar .tb-label strong {
+        color: #fff;
+    }
+
+    .dv-toolbar .btn {
+        padding: 3px 8px;
+        font-size: 0.8rem;
+        border-radius: 4px;
+    }
+
+    .dv-toolbar .tb-sep {
+        color: #444;
+        margin: 0 2px;
+        user-select: none;
+        font-size: 0.8rem;
+    }
+
+    .dv-viewer-body {
+        flex: 1;
+        display: flex;
+        min-height: 0;
+        position: relative;
+    }
+
+    .dv-osd-container {
+        flex: 1;
+        min-width: 0;
+        min-height: 0;
+        overflow: hidden;
+        background: #2a2a3a;
+        position: relative;
+    }
+
+    .dv-info-panel {
+        width: 280px;
+        flex-shrink: 0;
+        background: #1e1e2e;
+        border-left: 1px solid #333;
+        overflow-y: auto;
+        transition: width 0.2s ease, opacity 0.2s ease;
+    }
+
+    .dv-info-panel.collapsed {
+        width: 0;
+        overflow: hidden;
+        opacity: 0;
+        border-left: none;
+    }
+
+    .dv-info-panel .panel-header {
+        padding: 10px 14px;
+        border-bottom: 1px solid #333;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+    }
+
+    .dv-info-panel .panel-header h6 {
+        margin: 0;
+        font-size: 0.85rem;
+        color: #ccc;
+    }
+
+    .dv-info-panel .panel-body {
+        padding: 12px 14px;
+    }
+
+    .dv-info-panel .info-label {
+        font-size: 0.72rem;
+        color: #888;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-bottom: 2px;
+    }
+
+    .dv-info-panel .info-value {
+        font-size: 0.85rem;
+        color: #ddd;
+        margin-bottom: 10px;
+        word-break: break-all;
+    }
+
+    .dv-info-panel .btn-group-vertical .btn {
+        font-size: 0.78rem;
+        padding: 4px 10px;
+    }
+
+    .info-toggle-btn {
+        background: none;
+        border: 1px solid #555;
+        color: #aaa;
+        padding: 2px 6px;
+        font-size: 0.8rem;
+        cursor: pointer;
+        border-radius: 3px;
+    }
+
+    .info-toggle-btn:hover {
+        color: #fff;
+        border-color: #888;
+    }
+
+    .dv-page-strip {
+        flex-shrink: 0;
+        background: #16162a;
+        border-top: 1px solid #333;
+        padding: 4px 12px;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        overflow-x: auto;
+        min-height: 36px;
+    }
+
+    .dv-page-strip .page-btn {
+        min-width: 32px;
+        padding: 2px 8px;
+        font-size: 0.75rem;
+        border-radius: 3px;
+        border: 1px solid #444;
+        background: #2a2a3a;
+        color: #aaa;
+        cursor: pointer;
+        transition: all 0.15s;
+    }
+
+    .dv-page-strip .page-btn:hover {
+        background: #3a3a5a;
+        color: #fff;
+    }
+
+    .dv-page-strip .page-btn.active {
+        background: #4a6cf7;
+        border-color: #4a6cf7;
+        color: #fff;
+    }
+
+    /* Filter panel */
+    .dv-filter-panel {
+        position: absolute;
+        top: 8px;
+        left: 8px;
+        background: rgba(30, 30, 46, 0.95);
+        border: 1px solid #444;
+        border-radius: 6px;
+        padding: 12px 14px;
+        z-index: 100;
+        min-width: 220px;
+        box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+    }
+
+    .dv-filter-panel h6 {
+        margin: 0 0 8px 0;
+        font-size: 0.8rem;
+        color: #ccc;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .dv-filter-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 6px;
+    }
+
+    .dv-filter-row label {
+        font-size: 0.72rem;
+        color: #999;
+        width: 62px;
+        flex-shrink: 0;
+        text-transform: uppercase;
+        letter-spacing: 0.3px;
+    }
+
+    .dv-filter-row input[type="range"] {
+        flex: 1;
+        height: 4px;
+        accent-color: #4a6cf7;
+        cursor: pointer;
+    }
+
+    .dv-filter-row .filter-val {
+        font-size: 0.72rem;
+        color: #aaa;
+        width: 30px;
+        text-align: right;
+        font-family: monospace;
+    }
+
+    .dv-filter-actions {
+        display: flex;
+        gap: 6px;
+        margin-top: 8px;
+    }
+
+    .dv-filter-actions .btn {
+        font-size: 0.72rem;
+        padding: 2px 8px;
+    }
+
+    /* Keyboard shortcuts help */
+    .dv-shortcuts-panel {
+        position: absolute;
+        bottom: 8px;
+        left: 8px;
+        background: rgba(30, 30, 46, 0.95);
+        border: 1px solid #444;
+        border-radius: 6px;
+        padding: 12px 14px;
+        z-index: 100;
+        min-width: 240px;
+        box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+    }
+
+    .dv-shortcuts-panel h6 {
+        margin: 0 0 8px 0;
+        font-size: 0.8rem;
+        color: #ccc;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .dv-shortcut-row {
+        display: flex;
+        justify-content: space-between;
+        font-size: 0.75rem;
+        padding: 2px 0;
+        color: #bbb;
+    }
+
+    .dv-shortcut-row kbd {
+        background: #333;
+        border: 1px solid #555;
+        border-radius: 3px;
+        padding: 0 5px;
+        font-size: 0.7rem;
+        color: #eee;
+        font-family: monospace;
+    }
+
+    /* Active toggle button */
+    .btn-active-filter {
+        background: #4a6cf7 !important;
+        border-color: #4a6cf7 !important;
+        color: #fff !important;
+    }
+
+    .btn-active-measure {
+        background: #f74a4a !important;
+        border-color: #f74a4a !important;
+        color: #fff !important;
+    }
+
+    .btn-active-annotate {
+        background: #4af79a !important;
+        border-color: #4af79a !important;
+        color: #000 !important;
+    }
+
+    /* Measurement panel */
+    .dv-measure-panel {
+        position: absolute;
+        top: 8px;
+        right: 8px;
+        background: rgba(30, 30, 46, 0.95);
+        border: 1px solid #444;
+        border-radius: 6px;
+        padding: 12px 14px;
+        z-index: 100;
+        min-width: 200px;
+        max-width: 260px;
+        box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+    }
+
+    .dv-measure-panel h6 {
+        margin: 0 0 8px 0;
+        font-size: 0.8rem;
+        color: #ccc;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .dv-measure-list {
+        max-height: 150px;
+        overflow-y: auto;
+        margin-bottom: 6px;
+    }
+
+    .dv-measure-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 0.75rem;
+        padding: 3px 0;
+        color: #ddd;
+        border-bottom: 1px solid #333;
+    }
+
+    .dv-measure-item span:first-child {
+        color: #ff8888;
+        font-family: monospace;
+    }
+
+    /* Annotation list panel */
+    .dv-annot-panel {
+        position: absolute;
+        bottom: 8px;
+        right: 8px;
+        background: rgba(30, 30, 46, 0.95);
+        border: 1px solid #444;
+        border-radius: 6px;
+        padding: 12px 14px;
+        z-index: 100;
+        min-width: 200px;
+        max-width: 260px;
+        box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+    }
+
+    .dv-annot-panel h6 {
+        margin: 0 0 8px 0;
+        font-size: 0.8rem;
+        color: #ccc;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .dv-annot-list {
+        max-height: 150px;
+        overflow-y: auto;
+        margin-bottom: 6px;
+    }
+
+    .dv-annot-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 0.75rem;
+        padding: 3px 0;
+        color: #ddd;
+        border-bottom: 1px solid #333;
+    }
+
+    .dv-loading {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: calc(100vh - 64px);
+        background: #1a1a2e;
+        margin: -1rem -1.5rem 0 -1.5rem;
+    }
+
+    .dv-loading .spinner {
+        width: 48px;
+        height: 48px;
+        border: 4px solid #333;
+        border-top-color: #4a6cf7;
+        border-radius: 50%;
+        animation: dv-spin 0.8s linear infinite;
+    }
+
+    @@keyframes dv-spin {
+        to { transform: rotate(360deg); }
+    }
+
+    .dv-error {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: calc(100vh - 64px);
+        background: #1a1a2e;
+        margin: -1rem -1.5rem 0 -1.5rem;
+    }
+
+    .dv-error-card {
+        background: #2a1a1a;
+        border: 1px solid #5a2a2a;
+        border-radius: 8px;
+        padding: 24px 32px;
+        max-width: 500px;
+        text-align: center;
+        color: #ff8a8a;
+    }
+</style>
+
+<div class="dv-viewer-container">
+    @if (isLoading)
     {
-        <div class="d-flex justify-content-center align-items-center" style="height: 100vh;">
+        <div class="dv-loading">
             <div class="text-center">
-                <div class="spinner-border text-primary mb-3" role="status" style="width: 3rem; height: 3rem;">
-                    <span class="visually-hidden">Loading...</span>
-                </div>
-                <p class="text-muted">Loading document viewer...</p>
+                <div class="spinner mx-auto mb-3"></div>
+                <p style="color: #888;">Loading document viewer...</p>
             </div>
         </div>
     }
-    else if (error != null) @* Check if there is an error *@
+    else if (error != null)
     {
-        <div class="alert alert-danger m-3">
-            <i class="bi bi-exclamation-triangle me-2"></i> @* Error icon *@
-            @error @* Display the error message *@
+        <div class="dv-error">
+            <div class="dv-error-card">
+                <i class="bi bi-exclamation-triangle" style="font-size: 2rem;"></i>
+                <p class="mt-2 mb-0">@error</p>
+            </div>
         </div>
     }
-    else if (pages == null || pages.Count == 0) @* Check if no pages are found *@
+    else if (pages == null || pages.Count == 0)
     {
-        <div class="alert alert-warning m-3">
-            <i class="bi bi-exclamation-triangle me-2"></i> @* Warning icon *@
-            No TIFF pages found for this document. @* Display a warning message *@
+        <div class="dv-error">
+            <div class="dv-error-card" style="border-color: #5a5a2a; color: #ffcc8a;">
+                <i class="bi bi-file-earmark-image" style="font-size: 2rem;"></i>
+                <p class="mt-2 mb-0">No pages found for this document.</p>
+            </div>
         </div>
     }
-    else @* If pages are found, display the OpenSeadragon viewer *@
+    else
     {
-        @* =================================================================
-           Toolbar
-           =================================================================
-           Purpose: Provides document info and navigation controls
-        *@
-        <div class="bg-dark text-white p-2" style="flex-shrink: 0;">
-            <div class="container-fluid">
-                <div class="row align-items-center">
-                    <div class="col-md-4">
-                        <h6 class="mb-0">
-                            <i class="bi bi-file-earmark-image me-2"></i>
-                            Document #@DocumentId
-                        </h6>
+        <!-- Toolbar -->
+        <div class="dv-toolbar">
+            <div class="tb-section">
+                <span class="tb-label">
+                    <i class="bi bi-file-earmark-image me-1"></i>
+                    <strong>Document #@DocumentId</strong>
+                </span>
+            </div>
+
+            <div class="tb-section">
+                @if (pages.Count > 1)
+                {
+                    <button class="btn btn-outline-light btn-sm" @onclick="PreviousPage"
+                            disabled="@(currentPageIndex <= 0)" title="Previous page">
+                        <i class="bi bi-chevron-left"></i>
+                    </button>
+                    <span class="tb-label">@(currentPageIndex + 1) / @pages.Count</span>
+                    <button class="btn btn-outline-light btn-sm" @onclick="NextPage"
+                            disabled="@(currentPageIndex >= pages.Count - 1)" title="Next page">
+                        <i class="bi bi-chevron-right"></i>
+                    </button>
+                    <span class="tb-sep">|</span>
+                }
+
+                <button class="btn btn-outline-light btn-sm" @onclick="ZoomOut" title="Zoom out (-)">
+                    <i class="bi bi-zoom-out"></i>
+                </button>
+                <button class="btn btn-outline-light btn-sm" @onclick="ZoomIn" title="Zoom in (+)">
+                    <i class="bi bi-zoom-in"></i>
+                </button>
+                <button class="btn btn-outline-light btn-sm" @onclick="HomeView" title="Fit to view (0)">
+                    <i class="bi bi-aspect-ratio"></i>
+                </button>
+                <button class="btn btn-outline-light btn-sm" @onclick="FullPage" title="Full screen (f)">
+                    <i class="bi bi-arrows-fullscreen"></i>
+                </button>
+
+                <span class="tb-sep">|</span>
+
+                <button class="btn btn-outline-light btn-sm" @onclick="RotateLeft" title="Rotate left (Shift+R)">
+                    <i class="bi bi-arrow-counterclockwise"></i>
+                </button>
+                <button class="btn btn-outline-light btn-sm" @onclick="RotateRight" title="Rotate right (r)">
+                    <i class="bi bi-arrow-clockwise"></i>
+                </button>
+
+                <span class="tb-sep">|</span>
+
+                <button class="btn btn-outline-light btn-sm" @onclick="FitWidth" title="Fit to width (w)">
+                    <i class="bi bi-arrows"></i>
+                </button>
+
+                <span class="tb-sep">|</span>
+
+                <button class="btn btn-outline-light btn-sm @(isInverted ? "btn-active-filter" : "")"
+                        @onclick="ToggleInvert" title="Invert colors (i)">
+                    <i class="bi bi-circle-half"></i>
+                </button>
+                <button class="btn btn-outline-light btn-sm @(showFilterPanel ? "btn-active-filter" : "")"
+                        @onclick="ToggleFilterPanel" title="Image adjustments">
+                    <i class="bi bi-sliders"></i>
+                </button>
+                <button class="btn btn-outline-light btn-sm" @onclick="CaptureViewport" title="Screenshot viewport">
+                    <i class="bi bi-camera"></i>
+                </button>
+
+                <span class="tb-sep">|</span>
+
+                <button class="btn btn-outline-light btn-sm @(isMeasuring ? "btn-active-measure" : "")"
+                        @onclick="ToggleMeasure" title="Measure tool (Esc to cancel)">
+                    <i class="bi bi-rulers"></i>
+                </button>
+                <button class="btn btn-outline-light btn-sm @(isAnnotating ? "btn-active-annotate" : "")"
+                        @onclick="ToggleAnnotate" title="Annotate (Esc to cancel)">
+                    <i class="bi bi-pin-map"></i>
+                </button>
+                <button class="btn btn-outline-light btn-sm @(showScalebar ? "btn-active-filter" : "")"
+                        @onclick="ToggleScalebar" title="Toggle scale bar">
+                    <i class="bi bi-distribute-horizontal"></i>
+                </button>
+
+                <span class="tb-sep">|</span>
+
+                <button class="btn btn-outline-light btn-sm" @onclick="CopyViewLink" title="Copy view link">
+                    <i class="bi bi-link-45deg"></i>
+                </button>
+
+                <span class="tb-sep">|</span>
+
+                @if (currentPage != null)
+                {
+                    <a href="/api/DocumentBlob/page/@currentPage.PageId/download"
+                       class="btn btn-outline-light btn-sm" target="_blank" title="Download original">
+                        <i class="bi bi-download"></i>
+                    </a>
+                    <button class="btn btn-outline-light btn-sm"
+                            @onclick="() => OpenInNewTab(currentPage.PageId)" title="Open in new tab">
+                        <i class="bi bi-box-arrow-up-right"></i>
+                    </button>
+                }
+
+                <span class="tb-sep">|</span>
+
+                @if (currentPage != null)
+                {
+                    <a href="@GetReportBadFileUrl()" class="btn btn-outline-warning btn-sm" title="Report bad file">
+                        <i class="bi bi-exclamation-triangle"></i>
+                    </a>
+                }
+
+                <span class="tb-sep">|</span>
+
+                <button class="info-toggle-btn" @onclick="ToggleInfoPanel"
+                        title="@(showInfoPanel ? "Hide info" : "Show info")">
+                    <i class="bi bi-info-circle"></i>
+                </button>
+                <button class="info-toggle-btn" @onclick="ToggleShortcutsPanel"
+                        title="Keyboard shortcuts">
+                    <i class="bi bi-keyboard"></i>
+                </button>
+            </div>
+        </div>
+
+        <!-- Viewer body -->
+        <div class="dv-viewer-body">
+            <div id="@viewerContainerId" class="dv-osd-container"></div>
+
+            @if (showFilterPanel)
+            {
+                <div class="dv-filter-panel">
+                    <h6>
+                        <span><i class="bi bi-sliders me-1"></i>Image Adjustments</span>
+                        <button class="info-toggle-btn" @onclick="ToggleFilterPanel" title="Close">
+                            <i class="bi bi-x-lg"></i>
+                        </button>
+                    </h6>
+                    <div class="dv-filter-row">
+                        <label>Brightness</label>
+                        <input type="range" min="-100" max="100" value="@brightnessValue"
+                               @oninput="OnBrightnessChange" />
+                        <span class="filter-val">@brightnessValue</span>
                     </div>
-                    <div class="col-md-4 text-center">
-                        <div class="btn-group" role="group">
-                            <button class="btn btn-sm btn-outline-light" 
-                                    @onclick="ZoomIn" 
-                                    title="Zoom In">
-                                <i class="bi bi-zoom-in"></i>
-                            </button>
-                            <button class="btn btn-sm btn-outline-light" 
-                                    @onclick="ZoomOut" 
-                                    title="Zoom Out">
-                                <i class="bi bi-zoom-out"></i>
-                            </button>
-                            <button class="btn btn-sm btn-outline-light" 
-                                    @onclick="HomeView" 
-                                    title="Reset View">
-                                <i class="bi bi-house"></i>
-                            </button>
-                            <button class="btn btn-sm btn-outline-light" 
-                                    @onclick="FullPage" 
-                                    title="Fit to Page">
-                                <i class="bi bi-arrows-fullscreen"></i>
-                            </button>
-                            <button class="btn btn-sm btn-outline-light" 
-                                    @onclick="RotateLeft" 
-                                    title="Rotate Left">
-                                <i class="bi bi-arrow-counterclockwise"></i>
-                            </button>
-                            <button class="btn btn-sm btn-outline-light" 
-                                    @onclick="RotateRight" 
-                                    title="Rotate Right">
-                                <i class="bi bi-arrow-clockwise"></i>
+                    <div class="dv-filter-row">
+                        <label>Contrast</label>
+                        <input type="range" min="-100" max="100" value="@contrastValue"
+                               @oninput="OnContrastChange" />
+                        <span class="filter-val">@contrastValue</span>
+                    </div>
+                    <div class="dv-filter-actions">
+                        <button class="btn btn-outline-light btn-sm" @onclick="ResetFilters">
+                            <i class="bi bi-arrow-counterclockwise me-1"></i>Reset
+                        </button>
+                        <button class="btn btn-outline-light btn-sm @(isInverted ? "btn-active-filter" : "")"
+                                @onclick="ToggleInvert">
+                            <i class="bi bi-circle-half me-1"></i>Invert
+                        </button>
+                    </div>
+                </div>
+            }
+
+            @if (showShortcutsPanel)
+            {
+                <div class="dv-shortcuts-panel">
+                    <h6>
+                        <span><i class="bi bi-keyboard me-1"></i>Keyboard Shortcuts</span>
+                        <button class="info-toggle-btn" @onclick="ToggleShortcutsPanel" title="Close">
+                            <i class="bi bi-x-lg"></i>
+                        </button>
+                    </h6>
+                    <div class="dv-shortcut-row"><span>Zoom in</span><kbd>+</kbd></div>
+                    <div class="dv-shortcut-row"><span>Zoom out</span><kbd>-</kbd></div>
+                    <div class="dv-shortcut-row"><span>Fit to view</span><kbd>0</kbd></div>
+                    <div class="dv-shortcut-row"><span>Fit to width</span><kbd>W</kbd></div>
+                    <div class="dv-shortcut-row"><span>Full screen</span><kbd>F</kbd></div>
+                    <div class="dv-shortcut-row"><span>Rotate right</span><kbd>r</kbd></div>
+                    <div class="dv-shortcut-row"><span>Rotate left</span><kbd>Shift+R</kbd></div>
+                    <div class="dv-shortcut-row"><span>Invert colors</span><kbd>I</kbd></div>
+                    <div class="dv-shortcut-row"><span>Cancel mode</span><kbd>Esc</kbd></div>
+                    <div class="dv-shortcut-row"><span>Scroll</span><span style="color:#999;">Zoom in/out</span></div>
+                    <div class="dv-shortcut-row"><span>Double-click</span><span style="color:#999;">Zoom to point</span></div>
+                    <div class="dv-shortcut-row"><span>Click + drag</span><span style="color:#999;">Pan</span></div>
+                </div>
+            }
+
+            @if (showMeasurePanel)
+            {
+                <div class="dv-measure-panel">
+                    <h6>
+                        <span><i class="bi bi-rulers me-1"></i>Measurements</span>
+                        <button class="info-toggle-btn" @onclick="ToggleMeasurePanel" title="Close">
+                            <i class="bi bi-x-lg"></i>
+                        </button>
+                    </h6>
+                    @if (measurements != null && measurements.Count > 0)
+                    {
+                        <div class="dv-measure-list">
+                            @foreach (var m in measurements)
+                            {
+                                <div class="dv-measure-item">
+                                    <span>#@m.Id</span>
+                                    <span>@m.Distance</span>
+                                </div>
+                            }
+                        </div>
+                    }
+                    else
+                    {
+                        <p style="font-size:0.72rem;color:#888;margin:0;">Click two points to measure distance</p>
+                    }
+                    <div class="dv-filter-actions">
+                        <button class="btn btn-outline-light btn-sm" @onclick="UndoMeasurement">
+                            <i class="bi bi-arrow-counterclockwise me-1"></i>Undo
+                        </button>
+                        <button class="btn btn-outline-danger btn-sm" @onclick="ClearMeasurements">
+                            <i class="bi bi-trash me-1"></i>Clear
+                        </button>
+                    </div>
+                </div>
+            }
+
+            @if (showAnnotPanel)
+            {
+                <div class="dv-annot-panel">
+                    <h6>
+                        <span><i class="bi bi-pin-map me-1"></i>Annotations</span>
+                        <button class="info-toggle-btn" @onclick="ToggleAnnotPanel" title="Close">
+                            <i class="bi bi-x-lg"></i>
+                        </button>
+                    </h6>
+                    @if (annotations != null && annotations.Count > 0)
+                    {
+                        <div class="dv-annot-list">
+                            @foreach (var a in annotations)
+                            {
+                                <div class="dv-annot-item">
+                                    <span style="color:#4a6cf7;">#@a.Id</span>
+                                    <span>@(string.IsNullOrEmpty(a.Text) ? "(pin)" : a.Text)</span>
+                                </div>
+                            }
+                        </div>
+                    }
+                    else
+                    {
+                        <p style="font-size:0.72rem;color:#888;margin:0;">Click to place annotations. Right-click to remove.</p>
+                    }
+                    <div class="dv-filter-actions">
+                        <button class="btn btn-outline-light btn-sm" @onclick="UndoAnnotation">
+                            <i class="bi bi-arrow-counterclockwise me-1"></i>Undo
+                        </button>
+                        <button class="btn btn-outline-danger btn-sm" @onclick="ClearAnnotations">
+                            <i class="bi bi-trash me-1"></i>Clear
+                        </button>
+                    </div>
+                </div>
+            }
+
+            <div class="dv-info-panel @(showInfoPanel ? "" : "collapsed")">
+                @if (currentPage != null && showInfoPanel)
+                {
+                    <div class="panel-header">
+                        <h6><i class="bi bi-info-circle me-1"></i> Page Info</h6>
+                        <button class="info-toggle-btn" @onclick="ToggleInfoPanel" title="Close">
+                            <i class="bi bi-x-lg"></i>
+                        </button>
+                    </div>
+                    <div class="panel-body">
+                        <div class="info-label">File Name</div>
+                        <div class="info-value">@(currentPage.FileName ?? "—")</div>
+
+                        <div class="info-label">File Type</div>
+                        <div class="info-value">@(currentPage.FileType ?? currentPage.ContentType ?? "—")</div>
+
+                        <div class="info-label">Page</div>
+                        <div class="info-value">@currentPage.PageNumber of @pages.Count</div>
+
+                        @if (!string.IsNullOrEmpty(currentPage.PageReference))
+                        {
+                            <div class="info-label">Reference</div>
+                            <div class="info-value">@currentPage.PageReference</div>
+                        }
+
+                        <div class="info-label">Storage</div>
+                        <div class="info-value">
+                            @if (currentPage.StorageType == 1)
+                            {
+                                <span style="color: #6bff6b;">BLOB</span>
+                            }
+                            else
+                            {
+                                <span style="color: #ffcc6b;">File System</span>
+                            }
+                        </div>
+
+                        @if (currentPage.FileSize.HasValue)
+                        {
+                            <div class="info-label">File Size</div>
+                            <div class="info-value">@FormatFileSize(currentPage.FileSize.Value)</div>
+                        }
+
+                        @if (currentPage.UploadedDate.HasValue)
+                        {
+                            <div class="info-label">Uploaded</div>
+                            <div class="info-value">@currentPage.UploadedDate.Value.ToString("MMM dd, yyyy HH:mm")</div>
+                        }
+
+                        @if (!string.IsNullOrEmpty(currentPage.ChecksumMD5))
+                        {
+                            <div class="info-label">MD5 Checksum</div>
+                            <div class="info-value" style="font-family: monospace; font-size: 0.75rem;">@currentPage.ChecksumMD5</div>
+                        }
+
+                        <hr style="border-color: #333;" />
+
+                        <div class="btn-group-vertical w-100">
+                            <a href="/api/DocumentBlob/page/@currentPage.PageId/download"
+                               class="btn btn-outline-light btn-sm text-start" target="_blank">
+                                <i class="bi bi-download me-2"></i>Download Original
+                            </a>
+                            <a href="/api/DocumentBlob/page/@currentPage.PageId/jpeg"
+                               class="btn btn-outline-light btn-sm text-start" target="_blank">
+                                <i class="bi bi-file-image me-2"></i>Download as JPEG
+                            </a>
+                            <button class="btn btn-outline-light btn-sm text-start"
+                                    @onclick="() => OpenInNewTab(currentPage.PageId)">
+                                <i class="bi bi-box-arrow-up-right me-2"></i>Open in New Tab
                             </button>
                         </div>
                     </div>
-                    <div class="col-md-4 text-end">
-                        <span class="badge bg-secondary">
-                            Page @currentPageNumber of @pages.Count
-                        </span>
-                    </div>
-                </div>
+                }
             </div>
         </div>
 
-        @* =================================================================
-           Page Navigation Bar
-           =================================================================
-        *@
-        <div class="bg-light border-bottom p-2" style="flex-shrink: 0;">
-            <div class="container-fluid">
-                <div class="d-flex justify-content-between align-items-center">
-                    <button class="btn btn-sm btn-outline-secondary" 
-                            @onclick="PreviousPage" 
-                            disabled="@(currentPageNumber <= 1)">
-                        <i class="bi bi-chevron-left"></i> Previous
+        <!-- Page strip (multi-page) -->
+        @if (pages.Count > 1)
+        {
+            <div class="dv-page-strip">
+                <button class="page-btn" @onclick="PreviousPage"
+                        disabled="@(currentPageIndex <= 0)">
+                    <i class="bi bi-chevron-left"></i>
+                </button>
+                @foreach (var p in pages)
+                {
+                    var idx = pages.IndexOf(p);
+                    <button class="page-btn @(idx == currentPageIndex ? "active" : "")"
+                            @onclick="() => ViewPage(idx)">
+                        @p.PageNumber
                     </button>
-                    
-                    <div class="btn-group" role="group" style="max-width: 600px; overflow-x: auto;">
-                        @foreach (var documentpage in pages)
-                        {
-                            <button class="btn btn-sm @(documentpage.PageNumber == currentPageNumber ? "btn-primary" : "btn-outline-secondary")"
-                                    @onclick="() => ViewPage(documentpage.PageNumber)">
-                                @documentpage.PageNumber
-                            </button>
-                        }
-                    </div>
-                    
-                    <button class="btn btn-sm btn-outline-secondary" 
-                            @onclick="NextPage" 
-                            disabled="@(currentPageNumber >= pages.Count)">
-                        Next <i class="bi bi-chevron-right"></i>
-                    </button>
-                </div>
+                }
+                <button class="page-btn" @onclick="NextPage"
+                        disabled="@(currentPageIndex >= pages.Count - 1)">
+                    <i class="bi bi-chevron-right"></i>
+                </button>
             </div>
-        </div>
-
-        @* =================================================================
-           OpenSeadragon Viewer Container
-           =================================================================
-        *@
-        <div id="openseadragon-viewer" style="flex-grow: 1; background-color: #2a2a2a;"></div>
+        }
     }
 </div>
 
-@* ============================================================================
-   Code-Behind Logic for the OpenSeadragon ViewTiff Page
-   ============================================================================ *@
 @code {
-    [Parameter] public int TiffDocId { get; set; }
+    [Parameter] public string Token { get; set; } = null!;
     [Parameter] public string? Schema { get; set; }
-    string Database = "DefaultConnection";
-    
+
     private List<DocumentPage>? pages;
-    private int currentPageNumber = 1;
+    private int currentPageIndex = 0;
     private bool isLoading = true;
     private string? error;
-    private string? currentUsername;
-    private ApplicationUser? currentUser;
     private bool viewerInitialized = false;
+    private bool showInfoPanel = false;
+    private bool showFilterPanel = false;
+    private bool showShortcutsPanel = false;
+    private bool showMeasurePanel = false;
+    private bool showAnnotPanel = false;
+    private bool isInverted = false;
+    private bool isMeasuring = false;
+    private bool isAnnotating = false;
+    private bool showScalebar = true;
+    private int brightnessValue = 0;
+    private int contrastValue = 0;
+    private string viewerContainerId = "dv-tiff-viewer";
+    private List<MeasurementItem>? measurements;
+    private List<AnnotationItem>? annotations;
 
-    private int DocumentId => TiffDocId;
+    private class MeasurementItem { public int Id { get; set; } public string Distance { get; set; } = ""; }
+    private class AnnotationItem { public int Id { get; set; } public string Text { get; set; } = ""; }
+
+    private int DocumentId;
+    private DocumentPage? currentPage => pages != null && currentPageIndex < pages.Count ? pages[currentPageIndex] : null;
 
     protected override async Task OnParametersSetAsync()
     {
-        Console.WriteLine($"ViewTiff: OnParametersSetAsync called for DocumentId: {TiffDocId}, Database: {Database}, Schema: {Schema}");
         isLoading = true;
         error = null;
+        viewerInitialized = false;
 
         try
         {
-            // Get current user
             var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
-            currentUsername = authState.User.Identity?.Name;
-            Console.WriteLine($"ViewTiff: Current user: {currentUsername}");
+            var currentUsername = authState.User.Identity?.Name;
 
             if (string.IsNullOrEmpty(currentUsername))
             {
@@ -204,23 +885,15 @@
                 return;
             }
 
-            currentUser = await UserService.GetUserByUsernameAsync(currentUsername);
+            var currentUser = await UserService.GetUserByUsernameAsync(currentUsername);
             if (currentUser == null)
             {
                 error = "User not found in the system.";
                 return;
             }
 
-            // Fetch the document to get the project ID
             Document? doc = null;
-            if (!string.IsNullOrEmpty(Schema))
-            {
-                doc = await Repo.GetDocumentAsync(Database, Schema, DocumentId);
-            }
-            else
-            {
-                doc = await Repo.GetDocumentAsync(Database, DocumentId);
-            }
+            doc = await Repo.GetDocumentByTokenAsync(Token);
 
             if (doc == null)
             {
@@ -228,65 +901,45 @@
                 return;
             }
 
-            // Validate project access (Strict AD Group Check)
-            // Permission logic relies strictly on AD Group Claims matching Project Read/Edit Principal
-            // OR checks for Global Admin role
-            bool isGlobalAdmin = authState.User.IsInRole("DV_Global_Admins") || authState.User.HasClaim(c => (c.Type == "groups" || c.Type == "http://schemas.microsoft.com/ws/2008/06/identity/claims/groups") && c.Value == "DV_Global_Admins");
-            bool hasGroupAccess = doc.ProjectId.HasValue && await Repo.HasProjectAccessAsync(authState.User, doc.ProjectId.Value);
+            DocumentId = doc.DocumentId;
+            Schema = doc.SchemaName;
+
+            bool isGlobalAdmin = authState.User.IsInRole("DV_Global_Admins") ||
+                authState.User.HasClaim(c => (c.Type == "groups" ||
+                    c.Type == "http://schemas.microsoft.com/ws/2008/06/identity/claims/groups") &&
+                    c.Value == "DV_Global_Admins");
+            bool hasGroupAccess = doc.ProjectId.HasValue &&
+                await Repo.HasProjectAccessAsync(authState.User, doc.ProjectId.Value);
 
             if (!doc.ProjectId.HasValue || (!isGlobalAdmin && !hasGroupAccess))
             {
-                error = "You do not have permission to view documents from this project. Please contact your administrator for access.";
+                error = "You do not have permission to view documents from this project.";
                 return;
             }
 
-            // Load the pages
-            if (!string.IsNullOrEmpty(Schema))
-            {
-                 pages = (await Repo.GetPagesAsync(Database, Schema, DocumentId)).ToList();
-            }
-            else
-            {
-                 pages = (await Repo.GetPagesAsync(Database, DocumentId)).ToList();
-            }
+            pages = (await Repo.GetPagesAsync("DefaultConnection", doc.SchemaName!, DocumentId)).ToList();
 
-            Console.WriteLine($"ViewTiff: Loaded {pages?.Count ?? 0} pages");
             if (pages != null && pages.Count > 0)
-            {
-                currentPageNumber = pages[0].PageNumber;
-                Console.WriteLine($"ViewTiff: First page number: {currentPageNumber}, PageId: {pages[0].PageId}");
-            }
+                currentPageIndex = 0;
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"ViewTiff: ERROR - {ex.Message}");
             error = $"Error loading document: {ex.Message}";
             pages = new List<DocumentPage>();
         }
         finally
         {
             isLoading = false;
-            Console.WriteLine($"ViewTiff: Loading complete. Error: {error ?? "none"}");
         }
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        Console.WriteLine($"ViewTiff: OnAfterRenderAsync - firstRender={firstRender}, pages={pages?.Count ?? 0}, viewerInitialized={viewerInitialized}");
-        
-        // Remove firstRender check - it's not reliable in InteractiveServer mode
         if (pages != null && pages.Count > 0 && !viewerInitialized)
         {
-            Console.WriteLine("ViewTiff: Conditions met, initializing viewer...");
-            // Add a small delay to ensure DOM and OpenSeadragon library are fully loaded
-            await Task.Delay(200);
+            await Task.Delay(150);
             await InitializeViewer();
             viewerInitialized = true;
-            Console.WriteLine("ViewTiff: Viewer initialization complete");
-        }
-        else
-        {
-            Console.WriteLine($"ViewTiff: Skipping initialization - pages null={pages == null}, count={pages?.Count ?? 0}, already initialized={viewerInitialized}");
         }
     }
 
@@ -294,106 +947,255 @@
     {
         try
         {
-            var imageUrl = GetImageUrlForPage(currentPageNumber);
-            Console.WriteLine($"Initializing OpenSeadragon with image: {imageUrl}");
-            await JSRuntime.InvokeVoidAsync("initializeOpenSeadragon", imageUrl);
-            Console.WriteLine("OpenSeadragon initialized successfully");
+            var page = currentPage;
+            if (page == null) return;
+
+            if (page.StorageType == 1)
+            {
+                await JSRuntime.InvokeVoidAsync("DocViewer.initTiled", viewerContainerId, page.PageId);
+            }
+            else
+            {
+                var imageUrl = GetImageUrl(page);
+                await JSRuntime.InvokeVoidAsync("DocViewer.initSimple", viewerContainerId, imageUrl);
+            }
+
+            // Restore view state from URL hash if present
+            await Task.Delay(500);
+            var hashState = await JSRuntime.InvokeAsync<object?>("DocViewer.getUrlHashState");
+            if (hashState != null)
+            {
+                await JSRuntime.InvokeVoidAsync("DocViewer.restoreViewState", viewerContainerId, hashState);
+            }
         }
         catch (Exception ex)
         {
             error = $"Error initializing viewer: {ex.Message}";
-            Console.WriteLine($"Error initializing viewer: {ex.Message}");
             StateHasChanged();
         }
     }
 
-    private string GetImageUrlForPage(int pageNumber)
+    private string GetImageUrl(DocumentPage page)
     {
-        var page = pages?.FirstOrDefault(p => p.PageNumber == pageNumber);
-        if (page == null)
-            return "";
-
-        // Check if using BLOB storage
-        if (page.UsesBlobStorage)
-        {
-            // Use BLOB API endpoint with JPEG conversion for PageId
+        if (page.StorageType == 1)
             return $"/api/DocumentBlob/page/{page.PageId}/jpeg";
+
+        if (!string.IsNullOrEmpty(Schema))
+            return $"/api/tiff-view/{Schema}/{DocumentId}/{page.PageNumber}";
+
+        return $"/api/tiff-view/{DocumentId}/{page.PageNumber}";
+    }
+
+    private string GetReportBadFileUrl()
+    {
+        var url = $"report-bad-file?documentId={DocumentId}";
+        if (!string.IsNullOrEmpty(Schema))
+            url += $"&schema={Uri.EscapeDataString(Schema)}";
+        if (currentPage != null)
+        {
+            url += $"&pageId={currentPage.PageId}&pageNumber={currentPage.PageNumber}";
+            if (!string.IsNullOrEmpty(currentPage.FileName))
+                url += $"&fileName={Uri.EscapeDataString(currentPage.FileName)}";
+        }
+        return url;
+    }
+
+    private async Task ViewPage(int pageIndex)
+    {
+        if (pages == null || pageIndex < 0 || pageIndex >= pages.Count) return;
+
+        currentPageIndex = pageIndex;
+        var page = currentPage;
+        if (page == null) return;
+
+        if (viewerInitialized)
+        {
+            if (page.StorageType == 1)
+                await JSRuntime.InvokeVoidAsync("DocViewer.switchToTiledPage", viewerContainerId, page.PageId);
+            else
+                await JSRuntime.InvokeVoidAsync("DocViewer.switchToSimpleImage", viewerContainerId, GetImageUrl(page));
         }
         else
         {
-            // Use traditional file-based API endpoint (already converts to JPEG)
-            if (!string.IsNullOrEmpty(Schema))
-            {
-                return $"/api/tiff-view/{Schema}/{DocumentId}/{pageNumber}";
-            }
-            return $"/api/tiff-view/{DocumentId}/{pageNumber}";
-        }
-    }
-
-    private async Task ViewPage(int pageNumber)
-    {
-        if (pages != null && pages.Any(p => p.PageNumber == pageNumber))
-        {
-            currentPageNumber = pageNumber;
-            
-            // If viewer isn't initialized yet, initialize it with the new page
-            if (!viewerInitialized)
-            {
-                await InitializeViewer();
-                viewerInitialized = true;
-            }
-            else
-            {
-                // Otherwise just update the image
-                var imageUrl = GetImageUrlForPage(currentPageNumber);
-                await JSRuntime.InvokeVoidAsync("updateOpenSeadragonImage", imageUrl);
-            }
+            await InitializeViewer();
+            viewerInitialized = true;
         }
     }
 
     private async Task PreviousPage()
     {
-        if (currentPageNumber > 1)
-        {
-            await ViewPage(currentPageNumber - 1);
-        }
+        if (currentPageIndex > 0)
+            await ViewPage(currentPageIndex - 1);
     }
 
     private async Task NextPage()
     {
-        if (pages != null && currentPageNumber < pages.Count)
+        if (pages != null && currentPageIndex < pages.Count - 1)
+            await ViewPage(currentPageIndex + 1);
+    }
+
+    private async Task ZoomIn() { if (viewerInitialized) await JSRuntime.InvokeVoidAsync("DocViewer.zoomIn", viewerContainerId); }
+    private async Task ZoomOut() { if (viewerInitialized) await JSRuntime.InvokeVoidAsync("DocViewer.zoomOut", viewerContainerId); }
+    private async Task HomeView() { if (viewerInitialized) await JSRuntime.InvokeVoidAsync("DocViewer.home", viewerContainerId); }
+    private async Task FullPage() { if (viewerInitialized) await JSRuntime.InvokeVoidAsync("DocViewer.fullPage", viewerContainerId); }
+    private async Task RotateLeft() { if (viewerInitialized) await JSRuntime.InvokeVoidAsync("DocViewer.rotateLeft", viewerContainerId); }
+    private async Task RotateRight() { if (viewerInitialized) await JSRuntime.InvokeVoidAsync("DocViewer.rotateRight", viewerContainerId); }
+    private async Task FitWidth() { if (viewerInitialized) await JSRuntime.InvokeVoidAsync("DocViewer.fitWidth", viewerContainerId); }
+
+    private async Task ToggleInvert()
+    {
+        if (!viewerInitialized) return;
+        isInverted = await JSRuntime.InvokeAsync<bool>("DocViewer.toggleInvert", viewerContainerId);
+    }
+
+    private async Task CaptureViewport()
+    {
+        if (viewerInitialized)
+            await JSRuntime.InvokeVoidAsync("DocViewer.captureViewport", viewerContainerId);
+    }
+
+    private async Task OnBrightnessChange(ChangeEventArgs e)
+    {
+        if (!viewerInitialized) return;
+        if (int.TryParse(e.Value?.ToString(), out var val))
         {
-            await ViewPage(currentPageNumber + 1);
+            brightnessValue = val;
+            await JSRuntime.InvokeVoidAsync("DocViewer.setBrightness", viewerContainerId, val);
         }
     }
 
-    private async Task ZoomIn()
+    private async Task OnContrastChange(ChangeEventArgs e)
     {
-        await JSRuntime.InvokeVoidAsync("zoomInOpenSeadragon");
+        if (!viewerInitialized) return;
+        if (int.TryParse(e.Value?.ToString(), out var val))
+        {
+            contrastValue = val;
+            await JSRuntime.InvokeVoidAsync("DocViewer.setContrast", viewerContainerId, val);
+        }
     }
 
-    private async Task ZoomOut()
+    private async Task ResetFilters()
     {
-        await JSRuntime.InvokeVoidAsync("zoomOutOpenSeadragon");
+        if (!viewerInitialized) return;
+        brightnessValue = 0;
+        contrastValue = 0;
+        isInverted = false;
+        await JSRuntime.InvokeVoidAsync("DocViewer.resetFilters", viewerContainerId);
     }
 
-    private async Task HomeView()
+    private void ToggleInfoPanel() => showInfoPanel = !showInfoPanel;
+    private void ToggleFilterPanel() => showFilterPanel = !showFilterPanel;
+    private void ToggleShortcutsPanel() => showShortcutsPanel = !showShortcutsPanel;
+    private void ToggleMeasurePanel() => showMeasurePanel = !showMeasurePanel;
+    private void ToggleAnnotPanel() => showAnnotPanel = !showAnnotPanel;
+
+    private async Task ToggleMeasure()
     {
-        await JSRuntime.InvokeVoidAsync("homeOpenSeadragon");
+        if (!viewerInitialized) return;
+        isMeasuring = await JSRuntime.InvokeAsync<bool>("DocViewer.toggleMeasure", viewerContainerId);
+        if (isMeasuring)
+        {
+            isAnnotating = false;
+            showMeasurePanel = true;
+        }
+        await RefreshMeasurements();
     }
 
-    private async Task FullPage()
+    private async Task ToggleAnnotate()
     {
-        await JSRuntime.InvokeVoidAsync("fullPageOpenSeadragon");
+        if (!viewerInitialized) return;
+        isAnnotating = await JSRuntime.InvokeAsync<bool>("DocViewer.toggleAnnotate", viewerContainerId);
+        if (isAnnotating)
+        {
+            isMeasuring = false;
+            showAnnotPanel = true;
+        }
+        await RefreshAnnotations();
     }
 
-    private async Task RotateLeft()
+    private async Task ToggleScalebar()
     {
-        await JSRuntime.InvokeVoidAsync("rotateLeftOpenSeadragon");
+        if (!viewerInitialized) return;
+        showScalebar = await JSRuntime.InvokeAsync<bool>("DocViewer.toggleScalebar", viewerContainerId);
     }
 
-    private async Task RotateRight()
+    private async Task RefreshMeasurements()
     {
-        await JSRuntime.InvokeVoidAsync("rotateRightOpenSeadragon");
+        if (!viewerInitialized) return;
+        var items = await JSRuntime.InvokeAsync<List<MeasurementItem>>("DocViewer.getMeasurements", viewerContainerId);
+        measurements = items;
+    }
+
+    private async Task UndoMeasurement()
+    {
+        if (!viewerInitialized) return;
+        await JSRuntime.InvokeVoidAsync("DocViewer.undoMeasurement", viewerContainerId);
+        await RefreshMeasurements();
+    }
+
+    private async Task ClearMeasurements()
+    {
+        if (!viewerInitialized) return;
+        await JSRuntime.InvokeVoidAsync("DocViewer.clearMeasurements", viewerContainerId);
+        measurements = null;
+    }
+
+    private async Task RefreshAnnotations()
+    {
+        if (!viewerInitialized) return;
+        var items = await JSRuntime.InvokeAsync<List<AnnotationItem>>("DocViewer.getAnnotations", viewerContainerId);
+        annotations = items;
+    }
+
+    private async Task UndoAnnotation()
+    {
+        if (!viewerInitialized) return;
+        await JSRuntime.InvokeVoidAsync("DocViewer.undoAnnotation", viewerContainerId);
+        await RefreshAnnotations();
+    }
+
+    private async Task ClearAnnotations()
+    {
+        if (!viewerInitialized) return;
+        await JSRuntime.InvokeVoidAsync("DocViewer.clearAnnotations", viewerContainerId);
+        annotations = null;
+    }
+
+    private async Task CopyViewLink()
+    {
+        if (!viewerInitialized) return;
+        await JSRuntime.InvokeVoidAsync("DocViewer.updateUrlHash", viewerContainerId);
+        var url = await JSRuntime.InvokeAsync<string>("eval", "window.location.href");
+        await JSRuntime.InvokeVoidAsync("navigator.clipboard.writeText", url);
+    }
+
+    private async Task OpenInNewTab(int pageId)
+    {
+        await JSRuntime.InvokeVoidAsync("window.open", $"/api/DocumentBlob/page/{pageId}/jpeg", "_blank");
+    }
+
+    private static string FormatFileSize(long bytes)
+    {
+        string[] sizes = { "B", "KB", "MB", "GB" };
+        double len = bytes;
+        int order = 0;
+        while (len >= 1024 && order < sizes.Length - 1)
+        {
+            order++;
+            len /= 1024;
+        }
+        return $"{len:0.##} {sizes[order]}";
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        try
+        {
+            await JSRuntime.InvokeVoidAsync("DocViewer.destroy", viewerContainerId);
+        }
+        catch
+        {
+            // Ignore disposal errors during circuit disconnect
+        }
     }
 }

@@ -3,6 +3,7 @@
 @using System.Security.Claims
 @inject ProjectSelectionState ProjectSelection
 @inject AuthenticationStateProvider AuthStateProvider
+@inject DocumentRepository Repo
 @implements IDisposable
 
 <div class="top-row ps-3 navbar navbar-dark">
@@ -78,10 +79,15 @@
         var state = await AuthStateProvider.GetAuthenticationStateAsync();
         user = state.User;
         ProjectSelection.OnChange += StateHasChanged;
-        ProjectSelection.OnChange += CheckEditPermission;
+        ProjectSelection.OnChange += OnProjectChanged;
     }
 
-    private void CheckEditPermission()
+    private void OnProjectChanged()
+    {
+        _ = InvokeAsync(CheckEditPermissionAsync);
+    }
+
+    private async Task CheckEditPermissionAsync()
     {
         canEditProject = false;
         if (ProjectSelection.SelectedProjectId.HasValue && !string.IsNullOrEmpty(ProjectSelection.EditPrincipal) && user != null)
@@ -94,7 +100,8 @@
              else
              {
                  var editPrincipal = ProjectSelection.EditPrincipal;
-                 canEditProject = user.HasClaim(c => (c.Type == "groups" || c.Type == "role" || c.Type == ClaimTypes.Role) && (c.Value.Equals(editPrincipal, StringComparison.OrdinalIgnoreCase)));
+                 // Check AD claims AND app-managed groups
+                 canEditProject = await Repo.IsUserInGroupAsync(user, editPrincipal);
              }
         }
         StateHasChanged();
@@ -103,6 +110,6 @@
     public void Dispose()
     {
         ProjectSelection.OnChange -= StateHasChanged;
-        ProjectSelection.OnChange -= CheckEditPermission;
+        ProjectSelection.OnChange -= OnProjectChanged;
     }
 }

@@ -1,0 +1,1918 @@
+@page "/manage/bulk-export"
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Authorization
+@using DV.Shared.Models
+@inject DocumentRepository Repo
+@inject BulkExportApiService ExportApi
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject ProjectSelectionState ProjectSelectionState
+@inject AuditService AuditService
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+@attribute [Authorize]
+@implements IDisposable
+@rendermode InteractiveServer
+
+<PageTitle>Bulk Export - @(ProjectSelectionState.SelectedProjectName ?? "Document Viewer")</PageTitle>
+
+@if (!hasAccess)
+{
+    <div class="be-page">
+        <div class="be-empty">
+            @if (isLoading)
+            {
+                <div class="be-spinner"></div>
+                <p>Verifying access...</p>
+            }
+            else
+            {
+                <i class="bi bi-shield-lock" style="font-size:2.5rem;opacity:0.3;color:var(--red);"></i>
+                <h3 style="color:var(--text-bright);">Access Denied</h3>
+                <p style="color:var(--text-secondary);">@accessDeniedMessage</p>
+                <a href="/manage" class="be-btn primary" style="margin-top:8px;">
+                    <i class="bi bi-arrow-left"></i>Back to Manage
+                </a>
+            }
+        </div>
+    </div>
+}
+else
+{
+    <div class="be-page">
+        <!-- Header Banner -->
+        <div class="be-header">
+            <div class="be-header-inner">
+                <div class="be-header-left">
+                    <div class="be-header-icon">
+                        <i class="bi bi-cloud-arrow-down"></i>
+                    </div>
+                    <div>
+                        <div class="be-header-title">Bulk Export</div>
+                        <div class="be-header-sub">
+                            <i class="bi bi-database"></i> @ProjectSelectionState.SelectedSchemaName
+                            <span style="margin:0 6px;">•</span>
+                            @ProjectSelectionState.SelectedProjectName
+                        </div>
+                    </div>
+                </div>
+                <div style="display:flex;gap:8px;">
+                    <a href="/manage" class="be-btn secondary">
+                        <i class="bi bi-arrow-left"></i>Back
+                    </a>
+                </div>
+            </div>
+        </div>
+
+        <!-- Step Indicator -->
+        <div class="be-steps">
+            <div class="be-step @(currentStep == 1 ? "active" : currentStep > 1 ? "done" : "")">
+                <div class="be-step-num">@(currentStep > 1 ? "✓" : "1")</div>
+                <span>Configure</span>
+            </div>
+            <div class="be-step-line @(currentStep > 1 ? "done" : "")"></div>
+            <div class="be-step @(currentStep == 2 ? "active" : currentStep > 2 ? "done" : "")">
+                <div class="be-step-num">@(currentStep > 2 ? "✓" : "2")</div>
+                <span>Exporting</span>
+            </div>
+            <div class="be-step-line @(currentStep > 2 ? "done" : "")"></div>
+            <div class="be-step @(currentStep == 3 ? "active" : "")">
+                <div class="be-step-num">3</div>
+                <span>Complete</span>
+            </div>
+        </div>
+
+        @* ─── STEP 1: Configure Export ─── *@
+        @if (currentStep == 1)
+        {
+            <div class="be-card">
+                <div class="be-card-header">
+                    <i class="bi bi-gear" style="color:var(--accent);"></i>
+                    <strong>Export Configuration</strong>
+                </div>
+                <div class="be-card-body">
+                    <!-- Export Mode -->
+                    <div class="be-field">
+                        <label class="be-label">
+                            <i class="bi bi-funnel"></i> Export Scope
+                        </label>
+                        <div class="be-mode-tabs">
+                            <button class="be-mode-tab @(exportMode == "All" ? "active" : "")"
+                                    @onclick='() => SetExportMode("All")'>
+                                <i class="bi bi-collection"></i>All Documents
+                            </button>
+                            <button class="be-mode-tab @(exportMode == "Filtered" ? "active" : "")"
+                                    @onclick='() => SetExportMode("Filtered")'>
+                                <i class="bi bi-search"></i>Filtered
+                            </button>
+                        </div>
+                    </div>
+
+                    @if (exportMode == "Filtered")
+                    {
+                        <div class="be-filter-summary">
+                            <div class="be-filter-summary-left">
+                                <button class="be-btn primary" @onclick="OpenFilterDialog">
+                                    <i class="bi bi-sliders"></i>
+                                    <span>Configure Filters</span>
+                                    @if (filters.ActiveFilterCount() > 0)
+                                    {
+                                        <span class="be-filter-count">@filters.ActiveFilterCount()</span>
+                                    }
+                                </button>
+
+                                @if (previewCount >= 0)
+                                {
+                                    <span class="be-preview-count">
+                                        <i class="bi bi-file-earmark-text"></i>
+                                        <strong>@previewCount</strong> document@(previewCount != 1 ? "s" : "") match
+                                    </span>
+                                }
+                                else if (isLoadingPreview)
+                                {
+                                    <span class="be-preview-count">
+                                        <span class="be-spinner-sm"></span> Counting...
+                                    </span>
+                                }
+                            </div>
+
+                            @if (!filters.HasAnyFilter())
+                            {
+                                <span class="be-hint" style="margin-top:4px;">
+                                    <i class="bi bi-info-circle"></i>
+                                    No filters configured — click "Configure Filters" to define your export criteria.
+                                </span>
+                            }
+                        </div>
+
+                        @* ── Active Filter Pills ── *@
+                        @if (filters.HasAnyFilter())
+                        {
+                            <div class="be-active-filters">
+                                @foreach (var pill in GetActiveFilterPills())
+                                {
+                                    <div class="be-filter-pill">
+                                        <span>@pill.Label</span>
+                                        <button class="be-pill-remove" @onclick="() => RemovePillAndRefresh(pill)" title="Remove filter">
+                                            <i class="bi bi-x"></i>
+                                        </button>
+                                    </div>
+                                }
+                                <button class="be-pill-clear" @onclick="ClearAllFilters">
+                                    <i class="bi bi-x-circle"></i>Clear All
+                                </button>
+                            </div>
+                        }
+                    }
+
+                    <!-- Output Format -->
+                    <div class="be-field">
+                        <label class="be-label">
+                            <i class="bi bi-box-arrow-down"></i> Output Format
+                        </label>
+                        <div class="be-mode-tabs">
+                            <button class="be-mode-tab @(outputFormat == "Zip" ? "active" : "")"
+                                    @onclick='() => SetOutputFormat("Zip")'>
+                                <i class="bi bi-file-earmark-zip"></i>ZIP Archive
+                            </button>
+                            <button class="be-mode-tab @(outputFormat == "Folder" ? "active" : "")"
+                                    @onclick='() => SetOutputFormat("Folder")'>
+                                <i class="bi bi-folder2-open"></i>Folder
+                            </button>
+                        </div>
+                    </div>
+
+                    @if (outputFormat == "Folder")
+                    {
+                        <div class="be-field">
+                            <label class="be-label">Output Folder Path</label>
+                            <input class="be-input" @bind="outputPath"
+                                   placeholder="e.g. C:\Exports\MyProject" />
+                            <span class="be-hint">Files and metadata CSV will be written to this directory.</span>
+                        </div>
+                    }
+
+                    <!-- Include Files -->
+                    <div class="be-field">
+                        <label class="be-label">
+                            <i class="bi bi-file-earmark-binary"></i> Content Options
+                        </label>
+                        <label class="be-checkbox">
+                            <input type="checkbox" @bind="includeFiles" />
+                            <span>Include document files (PDFs, TIFFs, images)</span>
+                        </label>
+                        <span class="be-hint">
+                            @if (includeFiles)
+                            {
+                                @:Metadata CSV + all document files will be exported.
+                            }
+                            else
+                            {
+                                @:Only the metadata CSV will be exported (no files).
+                            }
+                        </span>
+                    </div>
+
+                    @if (configError != null)
+                    {
+                        <div class="be-alert error">
+                            <i class="bi bi-exclamation-triangle"></i>@configError
+                        </div>
+                    }
+                </div>
+                <div class="be-card-footer">
+                    <div></div>
+                    <button class="be-btn primary" @onclick="StartExport" disabled="@isStarting">
+                        @if (isStarting)
+                        {
+                            <span class="be-spinner-sm"></span>
+                            <span>Starting...</span>
+                        }
+                        else
+                        {
+                            <i class="bi bi-rocket-takeoff"></i>
+                            <span>Start Export</span>
+                        }
+                    </button>
+                </div>
+            </div>
+
+            <!-- Export Info -->
+            <div class="be-card">
+                <div class="be-card-header">
+                    <i class="bi bi-info-circle" style="color:var(--accent);"></i>
+                    <strong>About Bulk Export</strong>
+                </div>
+                <div class="be-card-body">
+                    <div class="be-info-grid">
+                        <div class="be-info-item">
+                            <i class="bi bi-filetype-csv" style="color:var(--green-bright);"></i>
+                            <div>
+                                <strong>CSV Metadata</strong>
+                                <p>Exports metadata in the same CSV format used by Bulk Upload — re-import ready.</p>
+                            </div>
+                        </div>
+                        <div class="be-info-item">
+                            <i class="bi bi-file-earmark-zip" style="color:var(--gold);"></i>
+                            <div>
+                                <strong>ZIP or Folder</strong>
+                                <p>Download as a single ZIP archive, or export directly to a folder on the server.</p>
+                            </div>
+                        </div>
+                        <div class="be-info-item">
+                            <i class="bi bi-arrow-repeat" style="color:var(--accent);"></i>
+                            <div>
+                                <strong>Background Processing</strong>
+                                <p>Exports run in the background — you'll receive a notification when complete.</p>
+                            </div>
+                        </div>
+                        <div class="be-info-item">
+                            <i class="bi bi-bell" style="color:var(--purple);"></i>
+                            <div>
+                                <strong>Notifications</strong>
+                                <p>A notification is sent when your export finishes, whether it succeeds or fails.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        }
+
+        @* ─── STEP 2: Exporting (Progress) ─── *@
+        @if (currentStep == 2)
+        {
+            <div class="be-card">
+                <div class="be-card-header">
+                    <i class="bi bi-arrow-repeat be-spin-icon" style="color:var(--accent);"></i>
+                    <strong>Exporting Documents...</strong>
+                    <span class="be-badge">@(jobStatus?.Status ?? "Processing")</span>
+                </div>
+                <div class="be-card-body">
+                    <!-- Progress Bar -->
+                    <div class="be-progress-section">
+                        <div class="be-progress-bar">
+                            <div class="be-progress-fill" style="width:@(jobStatus?.ProgressPercent ?? 0)%"></div>
+                        </div>
+                        <div class="be-progress-text">
+                            @if (jobStatus != null)
+                            {
+                                @:@jobStatus.ExportedDocuments of @jobStatus.TotalDocuments documents
+                                @if (jobStatus.TotalDocuments > 0)
+                                {
+                                    @: — @jobStatus.ProgressPercent.ToString("F0")%
+                                }
+                            }
+                        </div>
+                    </div>
+
+                    <!-- Current File -->
+                    @if (!string.IsNullOrEmpty(jobStatus?.CurrentFile))
+                    {
+                        <div class="be-current-file">
+                            <i class="bi bi-file-earmark"></i>
+                            <span>@jobStatus.CurrentFile</span>
+                        </div>
+                    }
+
+                    <!-- Live Stats -->
+                    <div class="be-live-stats">
+                        <div class="be-live-stat">
+                            <div class="be-live-stat-value">@(jobStatus?.ExportedDocuments ?? 0)</div>
+                            <div class="be-live-stat-label">Documents</div>
+                        </div>
+                        <div class="be-live-stat">
+                            <div class="be-live-stat-value">@(jobStatus?.ExportedFiles ?? 0)</div>
+                            <div class="be-live-stat-label">Files</div>
+                        </div>
+                        <div class="be-live-stat">
+                            <div class="be-live-stat-value">@FormatFileSize(jobStatus?.ExportSizeBytes ?? 0)</div>
+                            <div class="be-live-stat-label">Size</div>
+                        </div>
+                        <div class="be-live-stat">
+                            <div class="be-live-stat-value">@FormatElapsed(jobStatus?.Elapsed ?? TimeSpan.Zero)</div>
+                            <div class="be-live-stat-label">Elapsed</div>
+                        </div>
+                    </div>
+
+                    @if (jobStatus?.FailedFiles > 0)
+                    {
+                        <div class="be-alert warning" style="margin-top:12px;">
+                            <i class="bi bi-exclamation-triangle"></i>
+                            @jobStatus.FailedFiles file(s) failed so far.
+                        </div>
+                    }
+                </div>
+                <div class="be-card-footer">
+                    <div></div>
+                    <button class="be-btn danger-outline" @onclick="CancelExport" disabled="@isCancelling">
+                        @if (isCancelling)
+                        {
+                            <span class="be-spinner-sm"></span>
+                            <span>Cancelling...</span>
+                        }
+                        else
+                        {
+                            <i class="bi bi-x-circle"></i>
+                            <span>Cancel Export</span>
+                        }
+                    </button>
+                </div>
+            </div>
+        }
+
+        @* ─── STEP 3: Complete ─── *@
+        @if (currentStep == 3)
+        {
+            <div class="be-card">
+                <div class="be-card-header">
+                    @if (jobStatus?.Status == BulkExportStatuses.Completed)
+                    {
+                        <i class="bi bi-check-circle-fill" style="color:var(--green-bright);"></i>
+                        <strong>Export Complete</strong>
+                    }
+                    else if (jobStatus?.Status == BulkExportStatuses.Cancelled)
+                    {
+                        <i class="bi bi-dash-circle-fill" style="color:var(--gold);"></i>
+                        <strong>Export Cancelled</strong>
+                    }
+                    else
+                    {
+                        <i class="bi bi-exclamation-triangle-fill" style="color:var(--red);"></i>
+                        <strong>Export Failed</strong>
+                    }
+                </div>
+                <div class="be-card-body">
+                    <!-- Summary Stats -->
+                    <div class="be-result-stats">
+                        <div class="be-stat">
+                            <div class="be-stat-num">@(jobStatus?.TotalDocuments ?? 0)</div>
+                            <div class="be-stat-label">Total</div>
+                        </div>
+                        <div class="be-stat success">
+                            <div class="be-stat-num">@(jobStatus?.ExportedDocuments ?? 0)</div>
+                            <div class="be-stat-label">Exported</div>
+                        </div>
+                        @if ((jobStatus?.ExportedFiles ?? 0) > 0)
+                        {
+                            <div class="be-stat">
+                                <div class="be-stat-num">@(jobStatus?.ExportedFiles ?? 0)</div>
+                                <div class="be-stat-label">Files</div>
+                            </div>
+                        }
+                        @if ((jobStatus?.FailedFiles ?? 0) > 0)
+                        {
+                            <div class="be-stat error">
+                                <div class="be-stat-num">@jobStatus!.FailedFiles</div>
+                                <div class="be-stat-label">Failed</div>
+                            </div>
+                        }
+                        <div class="be-stat">
+                            <div class="be-stat-num">@FormatFileSize(jobStatus?.ExportSizeBytes ?? 0)</div>
+                            <div class="be-stat-label">Size</div>
+                        </div>
+                        <div class="be-stat">
+                            <div class="be-stat-num">@FormatElapsed(jobStatus?.Elapsed ?? TimeSpan.Zero)</div>
+                            <div class="be-stat-label">Duration</div>
+                        </div>
+                    </div>
+
+                    @* Download button for ZIP exports *@
+                    @if (jobStatus?.Status == BulkExportStatuses.Completed && jobStatus.OutputFormat == "Zip")
+                    {
+                        <div class="be-download-section">
+                            <button class="be-btn primary be-download-btn" @onclick="DownloadExport"
+                                    disabled="@isDownloading">
+                                @if (isDownloading)
+                                {
+                                    <span class="be-spinner-sm"></span>
+                                    <span>Downloading...</span>
+                                }
+                                else
+                                {
+                                    <i class="bi bi-download"></i>
+                                    <span>Download ZIP</span>
+                                }
+                            </button>
+                            <span class="be-hint">ZIP file will be available for 1 hour after completion.</span>
+                        </div>
+                    }
+
+                    @if (jobStatus?.Status == BulkExportStatuses.Completed && jobStatus.OutputFormat == "Folder")
+                    {
+                        <div class="be-alert success" style="margin-top:12px;">
+                            <i class="bi bi-folder-check"></i>
+                            Files exported to: <strong>@jobStatus.OutputPath</strong>
+                        </div>
+                    }
+
+                    @* Errors *@
+                    @if (jobStatus?.Errors?.Count > 0)
+                    {
+                        <div class="be-errors-section">
+                            <div class="be-errors-header" @onclick="() => showErrors = !showErrors">
+                                <i class="bi bi-exclamation-triangle" style="color:var(--red);"></i>
+                                <span>@jobStatus.Errors.Count error(s)</span>
+                                <i class="bi @(showErrors ? "bi-chevron-up" : "bi-chevron-down")"
+                                   style="margin-left:auto;"></i>
+                            </div>
+                            @if (showErrors)
+                            {
+                                <div class="be-errors-list">
+                                    @foreach (var err in jobStatus.Errors)
+                                    {
+                                        <div class="be-error-item">
+                                            <i class="bi bi-x-circle" style="color:var(--red);"></i>
+                                            <span>@err</span>
+                                        </div>
+                                    }
+                                </div>
+                            }
+                        </div>
+                    }
+
+                    @if (!string.IsNullOrEmpty(jobStatus?.Error))
+                    {
+                        <div class="be-alert error" style="margin-top:12px;">
+                            <i class="bi bi-exclamation-triangle"></i>@jobStatus.Error
+                        </div>
+                    }
+
+                    @if (downloadError != null)
+                    {
+                        <div class="be-alert error" style="margin-top:12px;">
+                            <i class="bi bi-exclamation-triangle"></i>@downloadError
+                        </div>
+                    }
+                </div>
+                <div class="be-card-footer">
+                    <button class="be-btn secondary" @onclick="StartNewExport">
+                        <i class="bi bi-plus-lg"></i>New Export
+                    </button>
+                    <a href="/manage" class="be-btn primary">
+                        <i class="bi bi-arrow-left"></i>Back to Manage
+                    </a>
+                </div>
+            </div>
+        }
+    </div>
+}
+
+@* ─── FILTER DIALOG MODAL ─── *@
+@if (showFilterDialog)
+{
+    <div class="be-overlay" @onclick="CloseFilterDialog"></div>
+    <div class="be-dialog">
+        <div class="be-dialog-header">
+            <div style="display:flex;align-items:center;gap:10px;">
+                <i class="bi bi-sliders" style="font-size:1.2rem;color:var(--accent);"></i>
+                <strong>Export Filters</strong>
+                @if (filters.ActiveFilterCount() > 0)
+                {
+                    <span class="be-filter-count">@filters.ActiveFilterCount() active</span>
+                }
+            </div>
+            <button class="be-dialog-close" @onclick="CloseFilterDialog">
+                <i class="bi bi-x-lg"></i>
+            </button>
+        </div>
+
+        <div class="be-dialog-body">
+            @* ── Section: Quick Filters ── *@
+            <div class="be-filter-section">
+                <div class="be-filter-section-header">
+                    <i class="bi bi-lightning-charge" style="color:var(--gold);"></i>
+                    <span>Quick Filters</span>
+                </div>
+                <div class="be-filter-grid">
+                    <!-- Status -->
+                    <div class="be-filter-group">
+                        <label class="be-filter-label">Status</label>
+                        <div class="be-chip-group">
+                            @foreach (var status in statusOptions)
+                            {
+                                var s = status;
+                                <button class="be-chip @(filters.Statuses.Contains(s) ? "active" : "")"
+                                        @onclick="() => ToggleChip(filters.Statuses, s)">
+                                    @s
+                                </button>
+                            }
+                        </div>
+                    </div>
+
+                    <!-- Classification -->
+                    <div class="be-filter-group">
+                        <label class="be-filter-label">Classification</label>
+                        <div class="be-chip-group">
+                            @foreach (var cls in classificationOptions)
+                            {
+                                var c = cls;
+                                <button class="be-chip @(filters.Classifications.Contains(c) ? "active" : "")"
+                                        @onclick="() => ToggleChip(filters.Classifications, c)">
+                                    @c
+                                </button>
+                            }
+                        </div>
+                    </div>
+
+                    <!-- Document Type -->
+                    <div class="be-filter-group">
+                        <label class="be-filter-label">Document Type</label>
+                        <div class="be-chip-group">
+                            @foreach (var dt in docTypeOptions)
+                            {
+                                var d = dt;
+                                <button class="be-chip @(filters.DocumentTypes.Contains(d) ? "active" : "")"
+                                        @onclick="() => ToggleChip(filters.DocumentTypes, d)">
+                                    @d
+                                </button>
+                            }
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            @* ── Section: Text Search ── *@
+            <div class="be-filter-section">
+                <div class="be-filter-section-header">
+                    <i class="bi bi-search" style="color:var(--accent);"></i>
+                    <span>Text Search</span>
+                </div>
+                <div class="be-filter-grid-2col">
+                    <div class="be-filter-input-group">
+                        <label class="be-filter-label">Title contains</label>
+                        <input class="be-filter-input" @bind="filters.TitleContains"
+                               placeholder="Search by title..." />
+                    </div>
+                    <div class="be-filter-input-group">
+                        <label class="be-filter-label">Author contains</label>
+                        <input class="be-filter-input" @bind="filters.AuthorContains"
+                               placeholder="Search by author..." />
+                    </div>
+                    <div class="be-filter-input-group">
+                        <label class="be-filter-label">Document Number contains</label>
+                        <input class="be-filter-input" @bind="filters.DocumentNumberContains"
+                               placeholder="Search by doc number..." />
+                    </div>
+                    <div class="be-filter-input-group">
+                        <label class="be-filter-label">Keywords contain</label>
+                        <input class="be-filter-input" @bind="filters.KeywordsContains"
+                               placeholder="Search by keywords..." />
+                    </div>
+                    <div class="be-filter-input-group" style="grid-column:1/-1;">
+                        <label class="be-filter-label">Memo contains</label>
+                        <input class="be-filter-input" @bind="filters.MemoContains"
+                               placeholder="Search within memo text..." />
+                    </div>
+                </div>
+            </div>
+
+            @* ── Section: Date Ranges ── *@
+            <div class="be-filter-section">
+                <div class="be-filter-section-header">
+                    <i class="bi bi-calendar-range" style="color:var(--green-bright);"></i>
+                    <span>Date Ranges</span>
+                </div>
+                <div class="be-filter-grid-2col">
+                    <div class="be-filter-input-group">
+                        <label class="be-filter-label">Created From</label>
+                        <input type="date" class="be-filter-input" @bind="filters.CreatedFrom" />
+                    </div>
+                    <div class="be-filter-input-group">
+                        <label class="be-filter-label">Created To</label>
+                        <input type="date" class="be-filter-input" @bind="filters.CreatedTo" />
+                    </div>
+                    <div class="be-filter-input-group">
+                        <label class="be-filter-label">Document Date From</label>
+                        <input type="date" class="be-filter-input" @bind="filters.DocumentDateFrom" />
+                    </div>
+                    <div class="be-filter-input-group">
+                        <label class="be-filter-label">Document Date To</label>
+                        <input type="date" class="be-filter-input" @bind="filters.DocumentDateTo" />
+                    </div>
+                </div>
+            </div>
+
+            @* ── Section: Custom Field Rules ── *@
+            <div class="be-filter-section">
+                <div class="be-filter-section-header">
+                    <i class="bi bi-braces" style="color:var(--purple);"></i>
+                    <span>Custom Field Rules</span>
+                    <span class="be-filter-section-hint">Add rules for any metadata field</span>
+                </div>
+
+                @if (filters.FieldRules.Count > 0)
+                {
+                    <div class="be-rules-logic">
+                        <span>Match:</span>
+                        <button class="be-logic-btn @(filters.RuleLogic == "AND" ? "active" : "")"
+                                @onclick='() => filters.RuleLogic = "AND"'>
+                            ALL rules (AND)
+                        </button>
+                        <button class="be-logic-btn @(filters.RuleLogic == "OR" ? "active" : "")"
+                                @onclick='() => filters.RuleLogic = "OR"'>
+                            ANY rule (OR)
+                        </button>
+                    </div>
+
+                    @for (int i = 0; i < filters.FieldRules.Count; i++)
+                    {
+                        var idx = i;
+                        var rule = filters.FieldRules[idx];
+                        <div class="be-rule-row">
+                            <select class="be-rule-select field" @bind="rule.Field"
+                                    @bind:after="() => OnRuleFieldChanged(rule)">
+                                <option value="">Select field...</option>
+                                <optgroup label="Core Fields">
+                                    <option value="Title">Title</option>
+                                    <option value="Author">Author</option>
+                                    <option value="DocumentNumber">Document Number</option>
+                                    <option value="Keywords">Keywords</option>
+                                    <option value="Memo">Memo</option>
+                                    <option value="DocumentIndex">Document Index</option>
+                                    <option value="Issue">Issue</option>
+                                    <option value="Version">Version</option>
+                                    <option value="Status">Status</option>
+                                    <option value="Classification">Classification</option>
+                                    <option value="DocumentType">Document Type</option>
+                                </optgroup>
+                                <optgroup label="Text Fields">
+                                    @for (int t = 1; t <= 12; t++)
+                                    {
+                                        var tf = $"Text{t:D2}";
+                                        <option value="@tf">@tf</option>
+                                    }
+                                </optgroup>
+                                <optgroup label="Date Fields">
+                                    @for (int d = 1; d <= 4; d++)
+                                    {
+                                        var df = $"Date{d:D2}";
+                                        <option value="@df">@df</option>
+                                    }
+                                    <option value="DocumentDate">Document Date</option>
+                                    <option value="CreatedOn">Created On</option>
+                                </optgroup>
+                                <optgroup label="Boolean Fields">
+                                    @for (int b = 1; b <= 3; b++)
+                                    {
+                                        var bf = $"Boolean{b:D2}";
+                                        <option value="@bf">@bf</option>
+                                    }
+                                </optgroup>
+                                <optgroup label="Number Fields">
+                                    @for (int n = 1; n <= 3; n++)
+                                    {
+                                        var nf = $"Number{n:D2}";
+                                        <option value="@nf">@nf</option>
+                                    }
+                                </optgroup>
+                            </select>
+
+                            <select class="be-rule-select op" @bind="rule.Operator">
+                                @foreach (var op in GetOperatorsForField(rule.Field))
+                                {
+                                    <option value="@op.Key">@op.Value</option>
+                                }
+                            </select>
+
+                            @if (!IsNoValueOperator(rule.Operator))
+                            {
+                                @if (IsBoolField(rule.Field))
+                                {
+                                    <select class="be-rule-input" @bind="rule.Value">
+                                        <option value="">—</option>
+                                        <option value="True">Yes</option>
+                                        <option value="False">No</option>
+                                    </select>
+                                }
+                                else if (IsDateField(rule.Field))
+                                {
+                                    <input type="text" class="be-rule-input" @bind="rule.Value"
+                                           placeholder="yyyy-MM-dd" />
+                                }
+                                else if (IsNumberField(rule.Field))
+                                {
+                                    <input type="number" step="any" class="be-rule-input"
+                                           @bind="rule.Value" placeholder="Value..." />
+                                }
+                                else
+                                {
+                                    <input class="be-rule-input" @bind="rule.Value" placeholder="Value..." />
+                                }
+                            }
+
+                            <button class="be-rule-remove" @onclick="() => RemoveRule(idx)"
+                                    title="Remove rule">
+                                <i class="bi bi-trash3"></i>
+                            </button>
+                        </div>
+                    }
+                }
+
+                <button class="be-btn secondary" style="margin-top:8px;" @onclick="AddRule">
+                    <i class="bi bi-plus-lg"></i>Add Rule
+                </button>
+            </div>
+        </div>
+
+        <div class="be-dialog-footer">
+            <div style="display:flex;align-items:center;gap:12px;">
+                @if (dialogPreviewCount >= 0)
+                {
+                    <span class="be-preview-count" style="margin:0;">
+                        <i class="bi bi-file-earmark-text"></i>
+                        <strong>@dialogPreviewCount</strong> document@(dialogPreviewCount != 1 ? "s" : "") match
+                    </span>
+                }
+                else if (isLoadingDialogPreview)
+                {
+                    <span class="be-preview-count" style="margin:0;">
+                        <span class="be-spinner-sm"></span> Counting...
+                    </span>
+                }
+                <button class="be-btn secondary" style="font-size:.78rem;" @onclick="RefreshDialogPreview">
+                    <i class="bi bi-arrow-clockwise"></i>Refresh Count
+                </button>
+            </div>
+            <div style="display:flex;gap:8px;">
+                <button class="be-btn secondary" @onclick="ClearAllFilters">
+                    <i class="bi bi-eraser"></i>Reset
+                </button>
+                <button class="be-btn primary" @onclick="ApplyFilters">
+                    <i class="bi bi-check-lg"></i>Apply Filters
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    // ── Access Control ──
+    private bool isLoading = true;
+    private bool hasAccess = false;
+    private string accessDeniedMessage = "You do not have edit access to the selected project.";
+    private string? currentUsername;
+
+    // ── Wizard State ──
+    private int currentStep = 1;
+
+    // ── Step 1: Configuration ──
+    private string exportMode = "All";
+    private string outputFormat = "Zip";
+    private string? outputPath;
+    private bool includeFiles = true;
+    private string? configError;
+    private bool isStarting = false;
+
+    // ── Filter State ──
+    private ExportFilterCriteria filters = new();
+    private bool showFilterDialog = false;
+    private int previewCount = -1;
+    private bool isLoadingPreview = false;
+    private int dialogPreviewCount = -1;
+    private bool isLoadingDialogPreview = false;
+
+    // ── Filter Options ──
+    private readonly string[] statusOptions = { "Draft", "Final", "Approved", "Archived", "Review", "Superseded" };
+    private readonly string[] classificationOptions = { "Public", "Internal", "Confidential", "Restricted" };
+    private readonly string[] docTypeOptions = { "PDF", "TIFF", "Word", "Excel", "Image", "CAD", "Email", "Other" };
+
+    // ── Step 2: Progress ──
+    private Guid? activeJobId;
+    private BulkExportJobStatus? jobStatus;
+    private System.Threading.Timer? pollTimer;
+    private bool isCancelling = false;
+
+    // ── Step 3: Complete ──
+    private bool isDownloading = false;
+    private string? downloadError;
+    private bool showErrors = false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        ProjectSelectionState.OnChange += OnProjectChanged;
+        await VerifyAccess();
+    }
+
+    private async Task VerifyAccess()
+    {
+        isLoading = true;
+        hasAccess = false;
+
+        try
+        {
+            if (!ProjectSelectionState.SelectedProjectId.HasValue)
+            {
+                accessDeniedMessage = "No project selected. Please select a project from Browse, then navigate to Manage > Bulk Export.";
+                isLoading = false;
+                return;
+            }
+
+            var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+            var user = authState.User;
+            currentUsername = user.Identity?.Name;
+
+            if (string.IsNullOrEmpty(currentUsername))
+            {
+                accessDeniedMessage = "User not authenticated.";
+                isLoading = false;
+                return;
+            }
+
+            var projectId = ProjectSelectionState.SelectedProjectId.Value;
+            var canEdit = await Repo.HasProjectEditAccessAsync(user, projectId);
+
+            if (!canEdit)
+            {
+                accessDeniedMessage = $"You do not have edit access to project '{ProjectSelectionState.SelectedProjectName}'.";
+                await AuditService.LogProjectAccessAsync(
+                    currentUsername, 0, projectId, "PROJECT_ACCESS_DENIED", "DENIED",
+                    "Edit access denied to Bulk Export page");
+                isLoading = false;
+                return;
+            }
+
+            hasAccess = true;
+            await AuditService.LogProjectAccessAsync(
+                currentUsername, 0, projectId, "ACCESS_PROJECT", "SUCCESS",
+                $"Bulk Export page opened for project '{ProjectSelectionState.SelectedProjectName}'");
+        }
+        catch (Exception ex)
+        {
+            accessDeniedMessage = $"Error verifying access: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private void SetExportMode(string mode)
+    {
+        exportMode = mode;
+        configError = null;
+    }
+
+    private void SetOutputFormat(string format)
+    {
+        outputFormat = format;
+        configError = null;
+    }
+
+    // ── Filter Dialog ──
+
+    private void OpenFilterDialog()
+    {
+        showFilterDialog = true;
+        dialogPreviewCount = -1;
+    }
+
+    private void CloseFilterDialog()
+    {
+        showFilterDialog = false;
+    }
+
+    private async Task ApplyFilters()
+    {
+        showFilterDialog = false;
+        await RefreshPreviewCount();
+    }
+
+    private async Task ClearAllFilters()
+    {
+        filters = new ExportFilterCriteria();
+        dialogPreviewCount = -1;
+        previewCount = -1;
+        StateHasChanged();
+    }
+
+    private void ToggleChip(List<string> list, string value)
+    {
+        if (list.Contains(value))
+            list.Remove(value);
+        else
+            list.Add(value);
+    }
+
+    private void AddRule()
+    {
+        filters.FieldRules.Add(new ExportFieldRule());
+    }
+
+    private void RemoveRule(int index)
+    {
+        if (index >= 0 && index < filters.FieldRules.Count)
+            filters.FieldRules.RemoveAt(index);
+    }
+
+    private void OnRuleFieldChanged(ExportFieldRule rule)
+    {
+        // Reset operator when field type changes
+        if (IsBoolField(rule.Field))
+            rule.Operator = "is_true";
+        else if (IsDateField(rule.Field))
+            rule.Operator = "equals";
+        else if (IsNumberField(rule.Field))
+            rule.Operator = "equals";
+        else
+            rule.Operator = "contains";
+        rule.Value = "";
+    }
+
+    private Dictionary<string, string> GetOperatorsForField(string? field)
+    {
+        if (IsBoolField(field))
+            return new() { ["is_true"] = "is true", ["is_false"] = "is false" };
+        if (IsDateField(field))
+            return new()
+            {
+                ["equals"] = "equals", ["greater_than"] = "after",
+                ["less_than"] = "before", ["is_empty"] = "is empty",
+                ["is_not_empty"] = "is not empty"
+            };
+        if (IsNumberField(field))
+            return new()
+            {
+                ["equals"] = "equals", ["not_equals"] = "not equals",
+                ["greater_than"] = "greater than", ["less_than"] = "less than",
+                ["is_empty"] = "is empty", ["is_not_empty"] = "is not empty"
+            };
+        return new()
+        {
+            ["contains"] = "contains", ["equals"] = "equals",
+            ["not_equals"] = "not equals", ["starts_with"] = "starts with",
+            ["ends_with"] = "ends with", ["is_empty"] = "is empty",
+            ["is_not_empty"] = "is not empty"
+        };
+    }
+
+    private static bool IsNoValueOperator(string? op) =>
+        op is "is_empty" or "is_not_empty" or "is_true" or "is_false";
+
+    private static bool IsBoolField(string? field) =>
+        field is "Boolean01" or "Boolean02" or "Boolean03";
+
+    private static bool IsDateField(string? field) =>
+        field is "Date01" or "Date02" or "Date03" or "Date04"
+            or "DocumentDate" or "CreatedOn";
+
+    private static bool IsNumberField(string? field) =>
+        field is "Number01" or "Number02" or "Number03";
+
+    private List<(string Label, Action Remove)> GetActiveFilterPills()
+    {
+        var pills = new List<(string Label, Action Remove)>();
+
+        foreach (var s in filters.Statuses.ToList())
+        {
+            var val = s;
+            pills.Add(($"Status: {val}", () => filters.Statuses.Remove(val)));
+        }
+        foreach (var c in filters.Classifications.ToList())
+        {
+            var val = c;
+            pills.Add(($"Class: {val}", () => filters.Classifications.Remove(val)));
+        }
+        foreach (var d in filters.DocumentTypes.ToList())
+        {
+            var val = d;
+            pills.Add(($"Type: {val}", () => filters.DocumentTypes.Remove(val)));
+        }
+        if (!string.IsNullOrWhiteSpace(filters.TitleContains))
+            pills.Add(($"Title: \"{filters.TitleContains}\"", () => filters.TitleContains = null));
+        if (!string.IsNullOrWhiteSpace(filters.AuthorContains))
+            pills.Add(($"Author: \"{filters.AuthorContains}\"", () => filters.AuthorContains = null));
+        if (!string.IsNullOrWhiteSpace(filters.DocumentNumberContains))
+            pills.Add(($"DocNo: \"{filters.DocumentNumberContains}\"", () => filters.DocumentNumberContains = null));
+        if (!string.IsNullOrWhiteSpace(filters.KeywordsContains))
+            pills.Add(($"Keywords: \"{filters.KeywordsContains}\"", () => filters.KeywordsContains = null));
+        if (!string.IsNullOrWhiteSpace(filters.MemoContains))
+            pills.Add(($"Memo: \"{filters.MemoContains}\"", () => filters.MemoContains = null));
+        if (filters.CreatedFrom.HasValue)
+            pills.Add(($"Created from: {filters.CreatedFrom:d}", () => filters.CreatedFrom = null));
+        if (filters.CreatedTo.HasValue)
+            pills.Add(($"Created to: {filters.CreatedTo:d}", () => filters.CreatedTo = null));
+        if (filters.DocumentDateFrom.HasValue)
+            pills.Add(($"Doc date from: {filters.DocumentDateFrom:d}", () => filters.DocumentDateFrom = null));
+        if (filters.DocumentDateTo.HasValue)
+            pills.Add(($"Doc date to: {filters.DocumentDateTo:d}", () => filters.DocumentDateTo = null));
+        for (int i = 0; i < filters.FieldRules.Count; i++)
+        {
+            var idx = i;
+            var r = filters.FieldRules[idx];
+            var label = $"{r.Field} {r.Operator} {r.Value}".Trim();
+            pills.Add((label, () => { if (idx < filters.FieldRules.Count) filters.FieldRules.RemoveAt(idx); }));
+        }
+        return pills;
+    }
+
+    private async Task RefreshPreviewCount()
+    {
+        if (!ProjectSelectionState.SelectedProjectId.HasValue ||
+            string.IsNullOrEmpty(ProjectSelectionState.SelectedSchemaName)) return;
+        if (!filters.HasAnyFilter()) { previewCount = -1; return; }
+
+        isLoadingPreview = true;
+        StateHasChanged();
+        try
+        {
+            var request = new BulkExportRequest
+            {
+                SchemaName = ProjectSelectionState.SelectedSchemaName,
+                ProjectId = ProjectSelectionState.SelectedProjectId.Value,
+                ExportMode = "Filtered",
+                Filters = filters
+            };
+            previewCount = await ExportApi.GetPreviewCountAsync(request);
+        }
+        catch { previewCount = -1; }
+        finally { isLoadingPreview = false; StateHasChanged(); }
+    }
+
+    private async Task RefreshDialogPreview()
+    {
+        if (!ProjectSelectionState.SelectedProjectId.HasValue ||
+            string.IsNullOrEmpty(ProjectSelectionState.SelectedSchemaName)) return;
+        if (!filters.HasAnyFilter()) { dialogPreviewCount = -1; return; }
+
+        isLoadingDialogPreview = true;
+        StateHasChanged();
+        try
+        {
+            var request = new BulkExportRequest
+            {
+                SchemaName = ProjectSelectionState.SelectedSchemaName,
+                ProjectId = ProjectSelectionState.SelectedProjectId.Value,
+                ExportMode = "Filtered",
+                Filters = filters
+            };
+            dialogPreviewCount = await ExportApi.GetPreviewCountAsync(request);
+        }
+        catch { dialogPreviewCount = -1; }
+        finally { isLoadingDialogPreview = false; StateHasChanged(); }
+    }
+
+    private void RemovePillAndRefresh((string Label, Action Remove) pill)
+    {
+        pill.Remove();
+        previewCount = -1;
+        StateHasChanged();
+    }
+
+    private async Task StartExport()
+    {
+        configError = null;
+
+        if (!ProjectSelectionState.SelectedProjectId.HasValue ||
+            string.IsNullOrEmpty(ProjectSelectionState.SelectedSchemaName))
+        {
+            configError = "No project or schema selected.";
+            return;
+        }
+
+        if (exportMode == "Filtered" && !filters.HasAnyFilter())
+        {
+            configError = "Please configure at least one filter for filtered export.";
+            return;
+        }
+
+        if (outputFormat == "Folder" && string.IsNullOrWhiteSpace(outputPath))
+        {
+            configError = "Please specify an output folder path.";
+            return;
+        }
+
+        isStarting = true;
+        StateHasChanged();
+
+        try
+        {
+            var request = new BulkExportRequest
+            {
+                SchemaName = ProjectSelectionState.SelectedSchemaName,
+                ProjectId = ProjectSelectionState.SelectedProjectId.Value,
+                ExportMode = exportMode,
+                Filters = exportMode == "Filtered" ? filters : null,
+                OutputFormat = outputFormat,
+                OutputPath = outputFormat == "Folder" ? outputPath : null,
+                IncludeFiles = includeFiles
+            };
+
+            var result = await ExportApi.StartExportAsync(request);
+
+            if (result == null)
+            {
+                configError = "Failed to start export. Please check your access and try again.";
+                return;
+            }
+
+            activeJobId = result.JobId;
+            jobStatus = result;
+            currentStep = 2;
+            StartPolling();
+        }
+        catch (Exception ex)
+        {
+            configError = $"Error starting export: {ex.Message}";
+        }
+        finally
+        {
+            isStarting = false;
+            StateHasChanged();
+        }
+    }
+
+    private void StartPolling()
+    {
+        StopPolling();
+        pollTimer = new System.Threading.Timer(async _ => await PollStatus(), null,
+            TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2));
+    }
+
+    private void StopPolling()
+    {
+        pollTimer?.Dispose();
+        pollTimer = null;
+    }
+
+    private async Task PollStatus()
+    {
+        if (!activeJobId.HasValue) return;
+
+        try
+        {
+            var status = await ExportApi.GetStatusAsync(activeJobId.Value);
+            if (status == null) return;
+
+            jobStatus = status;
+
+            if (status.Status == BulkExportStatuses.Completed ||
+                status.Status == BulkExportStatuses.Failed ||
+                status.Status == BulkExportStatuses.Cancelled)
+            {
+                StopPolling();
+                currentStep = 3;
+            }
+
+            await InvokeAsync(StateHasChanged);
+        }
+        catch
+        {
+            // Polling errors are transient — keep trying
+        }
+    }
+
+    private async Task CancelExport()
+    {
+        if (!activeJobId.HasValue) return;
+
+        isCancelling = true;
+        StateHasChanged();
+
+        try
+        {
+            await ExportApi.CancelExportAsync(activeJobId.Value);
+        }
+        catch
+        {
+            // Cancellation failure is not critical — polling will pick up the actual status
+        }
+        finally
+        {
+            isCancelling = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task DownloadExport()
+    {
+        if (!activeJobId.HasValue) return;
+
+        isDownloading = true;
+        downloadError = null;
+        StateHasChanged();
+
+        try
+        {
+            var result = await ExportApi.DownloadExportAsync(activeJobId.Value);
+
+            if (result?.data == null || result.Value.data == null)
+            {
+                downloadError = "Download failed — the export file may have expired.";
+                return;
+            }
+
+            var base64 = Convert.ToBase64String(result.Value.data);
+            var fileName = result.Value.fileName ?? "export.zip";
+            await JS.InvokeVoidAsync("downloadFileFromBase64", fileName, base64, "application/zip");
+        }
+        catch (Exception ex)
+        {
+            downloadError = $"Download failed: {ex.Message}";
+        }
+        finally
+        {
+            isDownloading = false;
+            StateHasChanged();
+        }
+    }
+
+    private void StartNewExport()
+    {
+        StopPolling();
+        activeJobId = null;
+        jobStatus = null;
+        currentStep = 1;
+        exportMode = "All";
+        filters = new ExportFilterCriteria();
+        previewCount = -1;
+        dialogPreviewCount = -1;
+        outputFormat = "Zip";
+        outputPath = null;
+        includeFiles = true;
+        configError = null;
+        downloadError = null;
+        showErrors = false;
+        isStarting = false;
+        isCancelling = false;
+        isDownloading = false;
+    }
+
+    private void OnProjectChanged()
+    {
+        StopPolling();
+        StartNewExport();
+        _ = InvokeAsync(async () =>
+        {
+            await VerifyAccess();
+            StateHasChanged();
+        });
+    }
+
+    private static string FormatFileSize(long bytes)
+    {
+        if (bytes < 1024) return $"{bytes} B";
+        if (bytes < 1024 * 1024) return $"{bytes / 1024.0:F1} KB";
+        if (bytes < 1024 * 1024 * 1024) return $"{bytes / (1024.0 * 1024):F1} MB";
+        return $"{bytes / (1024.0 * 1024 * 1024):F2} GB";
+    }
+
+    private static string FormatElapsed(TimeSpan ts)
+    {
+        if (ts.TotalHours >= 1) return $"{ts.Hours}h {ts.Minutes}m";
+        if (ts.TotalMinutes >= 1) return $"{ts.Minutes}m {ts.Seconds}s";
+        return $"{ts.Seconds}s";
+    }
+
+    public void Dispose()
+    {
+        StopPolling();
+        ProjectSelectionState.OnChange -= OnProjectChanged;
+    }
+}
+
+<style>
+    /* ── Layout ── */
+    .be-page {
+        padding: 1rem;
+        max-width: 1400px;
+        margin: 0 auto;
+        color: var(--text);
+    }
+
+    .be-empty {
+        display: flex; flex-direction: column; align-items: center;
+        gap: 8px; color: var(--text-muted); padding: 3rem;
+    }
+
+    .be-spinner {
+        width: 36px; height: 36px;
+        border: 3px solid var(--border);
+        border-top-color: var(--accent);
+        border-radius: 50%;
+        animation: be-spin .8s linear infinite;
+    }
+
+    .be-spinner-sm {
+        display: inline-block;
+        width: 14px; height: 14px;
+        border: 2px solid var(--border);
+        border-top-color: currentColor;
+        border-radius: 50%;
+        animation: be-spin .8s linear infinite;
+    }
+
+    @@keyframes be-spin { to { transform: rotate(360deg); } }
+
+    .be-spin-icon {
+        animation: be-spin 1.5s linear infinite;
+    }
+
+    /* ── Header Banner ── */
+    .be-header {
+        background: linear-gradient(135deg, rgb(5,39,103) 0%, #3a0647 100%);
+        border-radius: 12px;
+        padding: 1.25rem 1.5rem;
+        margin-bottom: 1rem;
+        box-shadow: 0 4px 12px rgba(0,0,0,.25);
+    }
+
+    .be-header-inner {
+        display: flex; align-items: center; justify-content: space-between;
+    }
+
+    .be-header-left { display: flex; align-items: center; gap: 14px; }
+
+    .be-header-icon {
+        width: 48px; height: 48px; border-radius: 12px;
+        background: rgba(255,255,255,.15);
+        display: flex; align-items: center; justify-content: center;
+        font-size: 1.4rem; color: #fff;
+    }
+
+    .be-header-title { font-size: 1.25rem; font-weight: 600; color: #fff; }
+    .be-header-sub { font-size: .82rem; color: rgba(255,255,255,.55); margin-top: 2px; }
+
+    /* ── Step Indicator ── */
+    .be-steps {
+        display: flex; align-items: center; justify-content: center;
+        gap: 0; margin-bottom: 1.25rem;
+    }
+
+    .be-step {
+        display: flex; align-items: center; gap: 6px;
+        font-size: .82rem; color: var(--text-muted);
+        padding: 6px 16px; border-radius: 20px;
+        transition: all .2s;
+    }
+
+    .be-step.active { background: var(--accent); color: #fff; font-weight: 600; }
+    .be-step.done { color: var(--green-bright); }
+
+    .be-step-num {
+        width: 22px; height: 22px; border-radius: 50%;
+        display: flex; align-items: center; justify-content: center;
+        font-size: .72rem; font-weight: 700;
+        border: 2px solid var(--border);
+        background: var(--bg-inset);
+    }
+
+    .be-step.active .be-step-num {
+        background: rgba(255,255,255,.2); border-color: transparent; color: #fff;
+    }
+
+    .be-step.done .be-step-num {
+        background: var(--green); border-color: transparent; color: #fff;
+    }
+
+    .be-step-line {
+        width: 40px; height: 2px; background: var(--border);
+        margin: 0 4px; transition: background .2s;
+    }
+
+    .be-step-line.done { background: var(--green); }
+
+    /* ── Mode Tabs ── */
+    .be-mode-tabs {
+        display: flex; gap: 4px;
+        background: var(--bg-inset); padding: 4px; border-radius: 10px;
+        border: 1px solid var(--border);
+    }
+
+    .be-mode-tab {
+        flex: 1; padding: 8px 16px; border-radius: 8px;
+        background: transparent; border: none; color: var(--text-muted);
+        font-size: .85rem; font-weight: 500; cursor: pointer;
+        display: flex; align-items: center; justify-content: center; gap: 6px;
+        transition: all .15s;
+    }
+
+    .be-mode-tab:hover { color: var(--text); }
+
+    .be-mode-tab.active {
+        background: var(--accent); color: #fff; box-shadow: 0 2px 8px rgba(88,166,255,.25);
+    }
+
+    /* ── Card ── */
+    .be-card {
+        background: var(--bg-surface);
+        border: 1px solid var(--border);
+        border-radius: 10px; overflow: hidden;
+        margin-bottom: 1rem;
+    }
+
+    .be-card-header {
+        display: flex; align-items: center; gap: 8px;
+        padding: .75rem 1.25rem;
+        background: var(--bg-inset);
+        border-bottom: 1px solid var(--border);
+        font-size: .95rem; color: var(--text-bright);
+    }
+
+    .be-card-body { padding: 1.25rem; }
+
+    .be-card-footer {
+        display: flex; justify-content: space-between; align-items: center;
+        padding: .75rem 1.25rem;
+        border-top: 1px solid var(--border);
+        background: var(--bg-inset);
+    }
+
+    /* ── Buttons ── */
+    .be-btn {
+        display: inline-flex; align-items: center; gap: 6px;
+        padding: 6px 14px; border-radius: 6px;
+        font-size: .85rem; font-weight: 500;
+        cursor: pointer; border: none; transition: all .15s;
+        text-decoration: none;
+    }
+
+    .be-btn.primary { background: var(--accent); color: #fff; }
+    .be-btn.primary:hover { background: var(--accent-hover); }
+    .be-btn.primary:disabled { opacity: .5; cursor: not-allowed; }
+
+    .be-btn.secondary {
+        background: transparent; color: var(--text-secondary);
+        border: 1px solid var(--border);
+    }
+
+    .be-btn.secondary:hover { border-color: var(--text-muted); color: var(--text); }
+
+    .be-btn.danger-outline {
+        background: transparent; color: var(--red);
+        border: 1px solid var(--red);
+    }
+
+    .be-btn.danger-outline:hover { background: rgba(248,81,73,.1); }
+    .be-btn.danger-outline:disabled { opacity: .5; cursor: not-allowed; }
+
+    /* ── Form Fields ── */
+    .be-field { margin-bottom: 1rem; }
+
+    .be-label {
+        display: flex; align-items: center; gap: 6px;
+        font-size: .85rem; font-weight: 600; color: var(--text-bright);
+        margin-bottom: 6px;
+    }
+
+    .be-input {
+        width: 100%; padding: 8px 12px; border-radius: 6px;
+        background: var(--bg-inset); border: 1px solid var(--border);
+        color: var(--text); font-size: .85rem;
+        transition: border-color .15s;
+    }
+
+    .be-input:focus { outline: none; border-color: var(--accent); }
+
+    .be-hint {
+        display: block; font-size: .75rem; color: var(--text-muted); margin-top: 4px;
+    }
+
+    .be-checkbox {
+        display: flex; align-items: center; gap: 8px;
+        font-size: .85rem; color: var(--text); cursor: pointer;
+    }
+
+    .be-checkbox input[type="checkbox"] {
+        width: 16px; height: 16px; accent-color: var(--accent);
+    }
+
+    /* ── Badge ── */
+    .be-badge {
+        font-size: .72rem; padding: 2px 8px; border-radius: 10px;
+        background: var(--accent); color: #fff; font-weight: 600;
+        margin-left: auto;
+    }
+
+    /* ── Alerts ── */
+    .be-alert {
+        display: flex; align-items: center; gap: 8px;
+        padding: 10px 14px; border-radius: 8px;
+        font-size: .84rem;
+    }
+
+    .be-alert.error {
+        background: rgba(248,81,73,.1); color: var(--red);
+        border: 1px solid rgba(248,81,73,.2);
+    }
+
+    .be-alert.success {
+        background: rgba(63,185,80,.1); color: var(--green-bright);
+        border: 1px solid rgba(63,185,80,.2);
+    }
+
+    .be-alert.warning {
+        background: rgba(227,179,65,.1); color: var(--gold);
+        border: 1px solid rgba(227,179,65,.2);
+    }
+
+    /* ── Progress ── */
+    .be-progress-section { margin-bottom: 1.25rem; }
+
+    .be-progress-bar {
+        height: 8px; border-radius: 4px;
+        background: var(--bg-inset); overflow: hidden;
+        border: 1px solid var(--border);
+    }
+
+    .be-progress-fill {
+        height: 100%; border-radius: 4px;
+        background: linear-gradient(90deg, var(--accent), var(--green));
+        transition: width .5s ease;
+    }
+
+    .be-progress-text {
+        text-align: center; font-size: .8rem; color: var(--text-muted); margin-top: 6px;
+    }
+
+    .be-current-file {
+        display: flex; align-items: center; gap: 6px;
+        font-size: .82rem; color: var(--text-secondary);
+        padding: 8px 12px; border-radius: 6px;
+        background: var(--bg-inset); border: 1px solid var(--border);
+        margin-bottom: 1rem;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+
+    /* ── Live Stats ── */
+    .be-live-stats {
+        display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px;
+    }
+
+    .be-live-stat {
+        text-align: center; padding: 12px 8px;
+        background: var(--bg-inset); border-radius: 8px;
+        border: 1px solid var(--border);
+    }
+
+    .be-live-stat-value {
+        font-size: 1.2rem; font-weight: 700; color: var(--text-bright);
+    }
+
+    .be-live-stat-label {
+        font-size: .72rem; color: var(--text-muted); margin-top: 2px;
+    }
+
+    /* ── Result Stats ── */
+    .be-result-stats {
+        display: flex; gap: 16px; justify-content: center;
+        flex-wrap: wrap; margin-bottom: 1.25rem;
+    }
+
+    .be-stat {
+        text-align: center; padding: 14px 20px;
+        background: var(--bg-inset); border-radius: 8px;
+        border: 1px solid var(--border); min-width: 80px;
+    }
+
+    .be-stat.success { border-color: var(--green); }
+    .be-stat.error { border-color: var(--red); }
+
+    .be-stat-num {
+        font-size: 1.5rem; font-weight: 700; color: var(--text-bright);
+    }
+
+    .be-stat.success .be-stat-num { color: var(--green-bright); }
+    .be-stat.error .be-stat-num { color: var(--red); }
+
+    .be-stat-label {
+        font-size: .75rem; color: var(--text-muted); margin-top: 2px;
+    }
+
+    /* ── Download ── */
+    .be-download-section {
+        text-align: center; margin: 1.25rem 0;
+    }
+
+    .be-download-btn {
+        font-size: 1rem !important; padding: 10px 24px !important;
+    }
+
+    /* ── Errors Section ── */
+    .be-errors-section {
+        margin-top: 1rem; border: 1px solid var(--border); border-radius: 8px;
+        overflow: hidden;
+    }
+
+    .be-errors-header {
+        display: flex; align-items: center; gap: 8px;
+        padding: 8px 12px; background: var(--bg-inset);
+        cursor: pointer; font-size: .84rem; color: var(--text);
+    }
+
+    .be-errors-header:hover { background: var(--bg-hover); }
+
+    .be-errors-list {
+        max-height: 200px; overflow-y: auto;
+        border-top: 1px solid var(--border);
+    }
+
+    .be-error-item {
+        display: flex; align-items: flex-start; gap: 6px;
+        padding: 6px 12px; font-size: .8rem; color: var(--text-secondary);
+        border-bottom: 1px solid var(--border);
+    }
+
+    .be-error-item:last-child { border-bottom: none; }
+
+    /* ── Info Grid ── */
+    .be-info-grid {
+        display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
+    }
+
+    .be-info-item {
+        display: flex; gap: 12px; align-items: flex-start;
+    }
+
+    .be-info-item i {
+        font-size: 1.3rem; margin-top: 2px; flex-shrink: 0;
+    }
+
+    .be-info-item strong {
+        display: block; font-size: .88rem; color: var(--text-bright); margin-bottom: 2px;
+    }
+
+    .be-info-item p {
+        font-size: .78rem; color: var(--text-muted); margin: 0; line-height: 1.4;
+    }
+
+    /* ── Responsive ── */
+    @@media (max-width: 768px) {
+        .be-live-stats { grid-template-columns: repeat(2, 1fr); }
+        .be-info-grid { grid-template-columns: 1fr; }
+        .be-result-stats { gap: 8px; }
+        .be-stat { min-width: 60px; padding: 10px 12px; }
+        .be-dialog { width: 98vw; max-height: 92vh; margin: 4vh auto; }
+        .be-filter-grid-2col { grid-template-columns: 1fr; }
+        .be-rule-row { flex-wrap: wrap; }
+    }
+
+    /* ─── Filter Dialog ─── */
+    .be-overlay {
+        position: fixed; inset: 0;
+        background: rgba(0,0,0,.6);
+        backdrop-filter: blur(4px);
+        z-index: 1000;
+        animation: be-fade-in .15s ease;
+    }
+
+    .be-dialog {
+        position: fixed;
+        top: 50%; left: 50%;
+        transform: translate(-50%, -50%);
+        width: min(780px, 94vw);
+        max-height: 85vh;
+        background: var(--bg-surface);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        box-shadow: 0 24px 48px rgba(0,0,0,.4);
+        z-index: 1001;
+        display: flex; flex-direction: column;
+        animation: be-dialog-in .2s ease;
+    }
+
+    @@keyframes be-fade-in { from { opacity: 0; } to { opacity: 1; } }
+
+    @@keyframes be-dialog-in {
+        from { opacity: 0; transform: translate(-50%, -48%) scale(.97); }
+        to   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+    }
+
+    .be-dialog-header {
+        display: flex; align-items: center; justify-content: space-between;
+        padding: 14px 20px;
+        border-bottom: 1px solid var(--border);
+        flex-shrink: 0;
+    }
+
+    .be-dialog-close {
+        background: transparent; border: none;
+        color: var(--text-muted); font-size: 1.1rem;
+        cursor: pointer; padding: 4px 8px; border-radius: 6px;
+        transition: all .15s;
+    }
+
+    .be-dialog-close:hover { background: var(--bg-hover); color: var(--text); }
+
+    .be-dialog-body {
+        flex: 1; overflow-y: auto; padding: 16px 20px;
+    }
+
+    .be-dialog-footer {
+        display: flex; align-items: center; justify-content: space-between;
+        padding: 12px 20px;
+        border-top: 1px solid var(--border);
+        background: var(--bg-inset);
+        border-radius: 0 0 14px 14px;
+        flex-shrink: 0;
+    }
+
+    /* ── Filter Sections ── */
+    .be-filter-section {
+        margin-bottom: 20px;
+        padding: 14px 16px;
+        background: var(--bg-inset);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+    }
+
+    .be-filter-section-header {
+        display: flex; align-items: center; gap: 8px;
+        font-size: .88rem; font-weight: 600; color: var(--text-bright);
+        margin-bottom: 12px;
+    }
+
+    .be-filter-section-hint {
+        font-size: .75rem; font-weight: 400;
+        color: var(--text-muted); margin-left: auto;
+    }
+
+    .be-filter-grid {
+        display: flex; flex-direction: column; gap: 12px;
+    }
+
+    .be-filter-grid-2col {
+        display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+    }
+
+    .be-filter-group { }
+
+    .be-filter-label {
+        display: block; font-size: .78rem; font-weight: 500;
+        color: var(--text-secondary); margin-bottom: 6px;
+    }
+
+    .be-filter-input-group { display: flex; flex-direction: column; }
+
+    .be-filter-input {
+        width: 100%; padding: 7px 10px; border-radius: 6px;
+        background: var(--bg-surface); border: 1px solid var(--border);
+        color: var(--text); font-size: .82rem;
+        transition: border-color .15s;
+    }
+
+    .be-filter-input:focus { outline: none; border-color: var(--accent); }
+
+    /* ── Chips (multi-select toggle buttons) ── */
+    .be-chip-group {
+        display: flex; flex-wrap: wrap; gap: 6px;
+    }
+
+    .be-chip {
+        padding: 5px 12px; border-radius: 16px;
+        font-size: .78rem; font-weight: 500;
+        background: var(--bg-surface); color: var(--text-muted);
+        border: 1px solid var(--border); cursor: pointer;
+        transition: all .15s;
+    }
+
+    .be-chip:hover { border-color: var(--accent); color: var(--text); }
+
+    .be-chip.active {
+        background: var(--accent); color: #fff;
+        border-color: var(--accent);
+    }
+
+    /* ── Filter Count Badge ── */
+    .be-filter-count {
+        font-size: .72rem; padding: 2px 8px; border-radius: 10px;
+        background: var(--green); color: #fff; font-weight: 600;
+    }
+
+    /* ── Preview Count ── */
+    .be-preview-count {
+        display: inline-flex; align-items: center; gap: 6px;
+        font-size: .82rem; color: var(--text-secondary);
+        padding: 4px 10px; border-radius: 6px;
+        background: var(--bg-inset); border: 1px solid var(--border);
+        margin-top: 8px;
+    }
+
+    /* ── Filter Summary (Step 1 area) ── */
+    .be-filter-summary {
+        margin-top: 12px;
+        padding: 12px 14px;
+        background: var(--bg-inset);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+    }
+
+    .be-filter-summary-row {
+        display: flex; align-items: center; gap: 10px;
+        flex-wrap: wrap;
+    }
+
+    .be-active-filters {
+        display: flex; flex-wrap: wrap; gap: 6px;
+        margin-top: 8px;
+    }
+
+    .be-filter-pill {
+        display: inline-flex; align-items: center; gap: 4px;
+        padding: 3px 10px; border-radius: 12px;
+        font-size: .75rem; font-weight: 500;
+        background: rgba(88,166,255,.12); color: var(--accent);
+        border: 1px solid rgba(88,166,255,.25);
+    }
+
+    .be-pill-remove {
+        background: none; border: none; color: var(--accent);
+        font-size: .7rem; cursor: pointer; padding: 0 2px;
+        opacity: .6; transition: opacity .15s;
+    }
+
+    .be-pill-remove:hover { opacity: 1; }
+
+    .be-pill-clear {
+        background: none; border: none;
+        color: var(--text-muted); font-size: .75rem;
+        cursor: pointer; text-decoration: underline;
+        padding: 2px 4px;
+    }
+
+    .be-pill-clear:hover { color: var(--red); }
+
+    /* ── Custom Rules ── */
+    .be-rules-logic {
+        display: flex; align-items: center; gap: 8px;
+        margin-bottom: 10px; font-size: .82rem; color: var(--text-secondary);
+    }
+
+    .be-logic-btn {
+        padding: 4px 10px; border-radius: 6px;
+        font-size: .78rem; font-weight: 500;
+        background: var(--bg-surface); color: var(--text-muted);
+        border: 1px solid var(--border); cursor: pointer;
+        transition: all .15s;
+    }
+
+    .be-logic-btn.active {
+        background: var(--accent); color: #fff; border-color: var(--accent);
+    }
+
+    .be-rule-row {
+        display: flex; align-items: center; gap: 6px;
+        margin-bottom: 6px;
+    }
+
+    .be-rule-select, .be-rule-input {
+        padding: 6px 8px; border-radius: 6px;
+        background: var(--bg-surface); border: 1px solid var(--border);
+        color: var(--text); font-size: .8rem;
+    }
+
+    .be-rule-select.field { flex: 2; min-width: 0; }
+    .be-rule-select.op { flex: 1.2; min-width: 0; }
+    .be-rule-input { flex: 1.5; min-width: 0; }
+
+    .be-rule-select:focus, .be-rule-input:focus {
+        outline: none; border-color: var(--accent);
+    }
+
+    .be-rule-remove {
+        background: transparent; border: none;
+        color: var(--text-muted); cursor: pointer;
+        padding: 4px 6px; border-radius: 4px;
+        transition: all .15s; flex-shrink: 0;
+    }
+
+    .be-rule-remove:hover { color: var(--red); background: rgba(248,81,73,.1); }
+</style>

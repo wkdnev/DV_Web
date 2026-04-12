@@ -11,7 +11,9 @@
    Created: January 2026
    ============================================================================ *@
 
-@page "/login-choice"
+@* Route /login-choice is handled by AuthController.LoginChoice (MVC view) to avoid antiforgery issues.
+   This Blazor component is kept for reference but is NOT routable. *@
+@* @page "/login-choice" *@
 @attribute [AllowAnonymous]
 @layout LoginLayout
 @using System.ComponentModel.DataAnnotations

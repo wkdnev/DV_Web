@@ -1,14 +1,19 @@
 ﻿using DV.Web.Services;
+using Microsoft.Extensions.Caching.Memory;
 
 namespace DV.Web.Middleware;
 
 /// <summary>
-/// Middleware to automatically track user sessions and activity
+/// Middleware to track user sessions and enforce NIST SP 800-53 session controls.
+/// Calls InitializeSessionAsync which handles sliding expiration, absolute timeout,
+/// concurrent session limits, and anomaly detection internally.
+/// Uses in-memory caching to avoid database hits on every request.
 /// </summary>
 public class SessionTrackingMiddleware
 {
     private readonly RequestDelegate _next;
     private readonly ILogger<SessionTrackingMiddleware> _logger;
+    private static readonly TimeSpan SessionCacheDuration = TimeSpan.FromSeconds(30);
 
     public SessionTrackingMiddleware(RequestDelegate next, ILogger<SessionTrackingMiddleware> logger)
     {
@@ -16,17 +21,15 @@ public class SessionTrackingMiddleware
         _logger = logger;
     }
 
-    public async Task InvokeAsync(HttpContext context, SessionManagementService sessionService)
+    public async Task InvokeAsync(HttpContext context, SessionManagementService sessionService, IMemoryCache memoryCache)
     {
         try
         {
-            // Only track authenticated users
             if (context.User.Identity?.IsAuthenticated == true)
             {
                 var username = context.User.Identity.Name;
                 if (!string.IsNullOrEmpty(username))
                 {
-                    // Update session activity for page requests (not API calls or static files)
                     if (context.Request.Path.HasValue && 
                         !context.Request.Path.Value.StartsWith("/api/") &&
                         !context.Request.Path.Value.StartsWith("/_blazor") &&
@@ -42,27 +45,32 @@ public class SessionTrackingMiddleware
                             userId = parsedId;
                         }
 
-                        // Ensure session is initialized and valid
-                        var session = await sessionService.InitializeSessionAsync(username, userId);
+                        var cacheKey = $"session:valid:{username}:{context.Session.Id}";
 
-                        if (!session.IsActive)
+                        if (!memoryCache.TryGetValue(cacheKey, out bool isActive))
                         {
-                             _logger.LogWarning("Access denied for terminated session: {SessionKey}", context.Session.Id);
-                             context.Response.Redirect("/Auth/Logout");
-                             return;
+                            // Cache miss — hit the database
+                            var session = await sessionService.InitializeSessionAsync(username, userId);
+                            isActive = session.IsActive;
+
+                            memoryCache.Set(cacheKey, isActive, new MemoryCacheEntryOptions
+                            {
+                                SlidingExpiration = SessionCacheDuration
+                            });
                         }
 
-                        await sessionService.UpdateSessionActivityAsync(
-                            "PageView", 
-                            context.Request.Method,
-                            context.Request.Path.Value);
+                        if (!isActive)
+                        {
+                            _logger.LogWarning("Session terminated for {Username}, redirecting to logout", username);
+                            context.Response.Redirect("/Auth/Logout");
+                            return;
+                        }
                     }
                 }
             }
         }
         catch (Exception ex)
         {
-            // Session tracking should not break the application
             _logger.LogWarning(ex, "Error in session tracking middleware");
         }
 

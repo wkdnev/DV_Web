@@ -1,0 +1,201 @@
+/* ================================================================
+   Theme System – CSS Custom Properties
+   Default: Dark  |  Override: [data-theme="light"]
+   ================================================================ */
+
+:root {
+    color-scheme: dark;
+
+    /* Backgrounds */
+    --bg-body: #0f1117;
+    --bg-surface: #161b22;
+    --bg-input: #0d1117;
+    --bg-inset: rgba(0,0,0,0.2);
+    --bg-inset-deep: rgba(0,0,0,0.3);
+
+    /* Borders */
+    --border: #21262d;
+    --border-muted: #30363d;
+
+    /* Text */
+    --text: #c9d1d9;
+    --text-bright: #e6edf3;
+    --text-secondary: #8b949e;
+    --text-muted: #484f58;
+
+    /* Accent – Blue */
+    --accent: #58a6ff;
+    --accent-hover: #79b8ff;
+    --accent-bg-subtle: rgba(88,166,255,0.04);
+    --accent-bg: rgba(88,166,255,0.08);
+    --accent-bg-10: rgba(88,166,255,0.1);
+    --accent-bg-15: rgba(88,166,255,0.15);
+    --accent-ring: rgba(88,166,255,0.5);
+
+    /* Green */
+    --green: #238636;
+    --green-hover: #2ea043;
+    --green-bright: #3fb950;
+
+    /* Red */
+    --red: #f85149;
+
+    /* Gold */
+    --gold: #d29922;
+    --gold-bright: #e3b341;
+
+    /* Sign-out accent */
+    --signout: #fbbf24;
+
+    /* Badges – PDF */
+    --badge-pdf-bg: rgba(248,81,73,0.15);
+    --badge-pdf-text: #f85149;
+    --badge-pdf-border: rgba(248,81,73,0.25);
+
+    /* Badges – TIFF */
+    --badge-tiff-bg: rgba(56,139,253,0.15);
+    --badge-tiff-text: #58a6ff;
+    --badge-tiff-border: rgba(56,139,253,0.25);
+
+    /* Badges – Other */
+    --badge-other-bg: rgba(110,118,129,0.15);
+    --badge-other-text: #8b949e;
+    --badge-other-border: rgba(110,118,129,0.25);
+
+    /* Badges – PDF (ViewDoc variant) */
+    --badge-pdf-vd-bg: rgba(210,153,34,0.15);
+    --badge-pdf-vd-text: #e3b341;
+    --badge-pdf-vd-border: rgba(210,153,34,0.3);
+
+    /* Highlight */
+    --highlight-bg: rgba(210,153,34,0.3);
+    --highlight-text: #e3b341;
+
+    /* Date-picker icon filter */
+    --date-picker-filter: invert(0.7);
+
+    /* Dashboard overrides */
+    --dash-card-bg: #161b22;
+    --dash-card-border: #21262d;
+    --dash-card-shadow: 0 2px 4px rgba(0,0,0,0.3);
+    --dash-hover-shadow: 0 4px 12px rgba(0,0,0,0.5);
+    --dash-section-bg: #0f1117;
+    --dash-table-header-bg: #161b22;
+    --dash-table-row-hover: rgba(255,255,255,0.03);
+    --dash-table-border: #21262d;
+    --dash-empty-bg: #161b22;
+    --dash-empty-border: #21262d;
+    --dash-header-gradient: linear-gradient(135deg, #6d28d9 0%, #5b21b6 100%);
+    --dash-link: #58a6ff;
+    --dash-link-hover: #79b8ff;
+}
+
+[data-theme="light"] {
+    color-scheme: light;
+
+    /* Backgrounds */
+    --bg-body: #f8f9fa;
+    --bg-surface: #ffffff;
+    --bg-input: #ffffff;
+    --bg-inset: rgba(0,0,0,0.03);
+    --bg-inset-deep: rgba(0,0,0,0.05);
+
+    /* Borders */
+    --border: #e5e7eb;
+    --border-muted: #d1d5db;
+
+    /* Text */
+    --text: #1f2937;
+    --text-bright: #111827;
+    --text-secondary: #6b7280;
+    --text-muted: #9ca3af;
+
+    /* Accent – Blue */
+    --accent: #2563eb;
+    --accent-hover: #1d4ed8;
+    --accent-bg-subtle: rgba(37,99,235,0.04);
+    --accent-bg: rgba(37,99,235,0.08);
+    --accent-bg-10: rgba(37,99,235,0.1);
+    --accent-bg-15: rgba(37,99,235,0.15);
+    --accent-ring: rgba(37,99,235,0.5);
+
+    /* Green */
+    --green: #16a34a;
+    --green-hover: #15803d;
+    --green-bright: #22c55e;
+
+    /* Red */
+    --red: #dc2626;
+
+    /* Gold */
+    --gold: #d97706;
+    --gold-bright: #b45309;
+
+    /* Sign-out accent */
+    --signout: #d97706;
+
+    /* Badges – PDF */
+    --badge-pdf-bg: rgba(220,38,38,0.1);
+    --badge-pdf-text: #dc2626;
+    --badge-pdf-border: rgba(220,38,38,0.2);
+
+    /* Badges – TIFF */
+    --badge-tiff-bg: rgba(37,99,235,0.1);
+    --badge-tiff-text: #2563eb;
+    --badge-tiff-border: rgba(37,99,235,0.2);
+
+    /* Badges – Other */
+    --badge-other-bg: rgba(107,114,128,0.1);
+    --badge-other-text: #6b7280;
+    --badge-other-border: rgba(107,114,128,0.2);
+
+    /* Badges – PDF (ViewDoc variant) */
+    --badge-pdf-vd-bg: rgba(217,119,6,0.1);
+    --badge-pdf-vd-text: #b45309;
+    --badge-pdf-vd-border: rgba(217,119,6,0.2);
+
+    /* Highlight */
+    --highlight-bg: rgba(217,119,6,0.2);
+    --highlight-text: #92400e;
+
+    /* Date-picker icon filter */
+    --date-picker-filter: none;
+
+    /* Dashboard overrides */
+    --dash-card-bg: #ffffff;
+    --dash-card-border: #e5e7eb;
+    --dash-card-shadow: 0 2px 4px rgba(0,0,0,0.06);
+    --dash-hover-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    --dash-section-bg: #f8f9fa;
+    --dash-table-header-bg: #f9fafb;
+    --dash-table-row-hover: #f9fafb;
+    --dash-table-border: #e5e7eb;
+    --dash-empty-bg: #f9fafb;
+    --dash-empty-border: #e5e7eb;
+    --dash-header-gradient: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);
+    --dash-link: #2563eb;
+    --dash-link-hover: #1d4ed8;
+}
+
+/* ================================================================
+   Theme Toggle Button (sits in header)
+   ================================================================ */
+.theme-toggle-btn {
+    background: none;
+    border: 1px solid rgba(255,255,255,0.2);
+    color: rgba(255,255,255,0.85);
+    border-radius: 6px;
+    padding: 4px 8px;
+    font-size: 1.1rem;
+    cursor: pointer;
+    transition: background 0.2s, color 0.2s, border-color 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+}
+.theme-toggle-btn:hover {
+    background: rgba(255,255,255,0.15);
+    color: white;
+    border-color: rgba(255,255,255,0.3);
+}

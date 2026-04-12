@@ -16,8 +16,8 @@
    - Bootstrap 5.x for styling.
 *@
 
-@page "/viewdoc/{DocumentId:int}"
-@page "/viewdoc/{Schema}/{DocumentId:int}"
+@page "/viewdoc/{Token}"
+@page "/viewdoc/{Schema}/{Token}"
 @* Defines the route for this page with schema and document ID parameters *@
 
 @using DV.Shared.Models
@@ -33,77 +33,499 @@
 @attribute [Authorize]
 @rendermode InteractiveServer
 
-@if (isLoading)
-{
-    <div class="d-flex justify-content-center my-3">
-        <div class="spinner-border text-primary" role="status">
-            <span class="visually-hidden">Loading...</span>
+<style>
+    .vd-page {
+        min-height: calc(100vh - 64px);
+        background: var(--bg-body);
+        color: var(--text);
+        display: flex;
+        align-items: flex-start;
+        justify-content: center;
+        padding: 40px 20px;
+    }
+
+    .vd-card {
+        background: var(--bg-surface);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        width: 100%;
+        max-width: 780px;
+        overflow: hidden;
+    }
+
+    .vd-header {
+        padding: 20px 24px 16px;
+        border-bottom: 1px solid var(--border);
+    }
+
+    .vd-title {
+        font-size: 1.15rem;
+        font-weight: 600;
+        color: var(--text-bright);
+        margin: 0 0 6px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+    .vd-title i { color: var(--accent); font-size: 1rem; }
+
+    .vd-subtitle {
+        font-size: 0.78rem;
+        color: var(--text-secondary);
+        font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .vd-type-badge {
+        display: inline-block;
+        padding: 1px 7px;
+        border-radius: 10px;
+        font-size: 0.62rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    .vd-type-badge.pdf { background: var(--badge-pdf-vd-bg); color: var(--badge-pdf-vd-text); border: 1px solid var(--badge-pdf-vd-border); }
+    .vd-type-badge.tiff { background: var(--badge-tiff-bg); color: var(--badge-tiff-text); border: 1px solid var(--badge-tiff-border); }
+    .vd-type-badge.other { background: var(--badge-other-bg); color: var(--badge-other-text); border: 1px solid var(--badge-other-border); }
+
+    .vd-body {
+        padding: 20px 24px;
+    }
+
+    .vd-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px 24px;
+    }
+
+    .vd-field-label {
+        font-size: 0.62rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.8px;
+        color: var(--text-muted);
+        margin-bottom: 3px;
+    }
+
+    .vd-field-value {
+        font-size: 0.82rem;
+        color: var(--text);
+        word-break: break-word;
+    }
+    .vd-field-value.mono {
+        font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+        font-size: 0.78rem;
+        color: var(--text-secondary);
+    }
+
+    .vd-status-dot {
+        display: inline-block;
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        margin-right: 5px;
+        vertical-align: middle;
+    }
+    .vd-status-dot.draft { background: var(--gold); }
+    .vd-status-dot.final { background: var(--green-bright); }
+    .vd-status-dot.archived { background: var(--text-muted); }
+
+    .vd-section {
+        border-top: 1px solid var(--border);
+        padding: 16px 24px 20px;
+    }
+    .vd-section-label {
+        font-size: 0.62rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        color: var(--accent);
+        margin-bottom: 14px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+    .vd-section-label i { font-size: 0.7rem; }
+
+    .vd-field-full {
+        grid-column: 1 / -1;
+    }
+
+    .vd-field-value.memo {
+        font-size: 0.78rem;
+        color: var(--text-secondary);
+        white-space: pre-wrap;
+        background: var(--bg-inset);
+        padding: 8px 10px;
+        border-radius: 4px;
+        border: 1px solid var(--border);
+        max-height: 120px;
+        overflow-y: auto;
+    }
+
+    .vd-actions {
+        padding: 16px 24px 20px;
+        border-top: 1px solid var(--border);
+        display: flex;
+        gap: 10px;
+    }
+
+    .vd-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 7px 16px;
+        border-radius: 6px;
+        font-size: 0.78rem;
+        font-weight: 500;
+        text-decoration: none;
+        transition: all 0.15s;
+        cursor: pointer;
+        border: none;
+    }
+    .vd-btn.primary {
+        background: var(--green);
+        color: #fff;
+    }
+    .vd-btn.primary:hover { background: var(--green-hover); color: #fff; }
+    .vd-btn.secondary {
+        background: transparent;
+        border: 1px solid var(--border-muted);
+        color: var(--text);
+    }
+    .vd-btn.secondary:hover { border-color: var(--accent); color: var(--accent); }
+
+    /* States */
+    .vd-empty {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 60px 40px;
+        text-align: center;
+        gap: 10px;
+    }
+    .vd-empty i { font-size: 2.5rem; opacity: 0.3; }
+    .vd-empty p { font-size: 0.85rem; margin: 0; }
+    .vd-empty .vd-error-detail {
+        font-size: 0.75rem;
+        color: var(--text-secondary);
+        text-align: left;
+        margin-top: 10px;
+        padding: 12px;
+        background: var(--bg-inset-deep);
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        max-width: 100%;
+        overflow: auto;
+    }
+
+    .vd-spinner {
+        width: 32px;
+        height: 32px;
+        border: 3px solid var(--border);
+        border-top-color: var(--accent);
+        border-radius: 50%;
+        animation: vd-spin 0.7s linear infinite;
+    }
+    @@keyframes vd-spin { to { transform: rotate(360deg); } }
+</style>
+
+<div class="vd-page">
+    @if (isLoading)
+    {
+        <div class="vd-card">
+            <div class="vd-empty">
+                <div class="vd-spinner"></div>
+                <p>Loading document...</p>
+            </div>
         </div>
-    </div>
-}
-else if (!string.IsNullOrEmpty(accessError))
-{
-    <div class="alert alert-danger">
-        <i class="bi bi-exclamation-triangle me-2"></i>
-        <strong>Access Denied</strong>
-        <p class="mb-0">@((MarkupString)accessError)</p>
-    </div>
-}
-else if (doc is null)
-{
-    <div class="alert alert-warning">
-        <i class="bi bi-file-x me-2"></i>
-        <strong>Document Not Found</strong>
-        <p class="mb-0">The requested document could not be found.</p>
-    </div>
-}
-else @* If the document is found, display its metadata *@
-{
-    <div class="card">
-        @* Card container for the document metadata *@
-        <div class="card-body">
-            @* Card body containing the metadata details *@
-            <h5 class="card-title">@doc.Title</h5> @* Display the document title *@
-            <h6 class="card-subtitle mb-2 text-body-secondary">@doc.DocumentNumber (@doc.DocumentType)</h6> @* Display the document number and type *@
-            <dl class="row">
-                @* Definition list for metadata details *@
-                <dt class="col-sm-3">Status</dt> @* Label for the status *@
-                <dd class="col-sm-9">@doc.Status</dd> @* Display the document status *@
-                <dt class="col-sm-3">Author</dt> @* Label for the author *@
-                <dd class="col-sm-9">@doc.Author</dd> @* Display the document author *@
-                <dt class="col-sm-3">Project</dt> @* Label for the associated project *@
-                <dd class="col-sm-9">@proj?.ProjectName (@proj?.ProjectCode)</dd> @* Display the project name and code *@
-                <dt class="col-sm-3">Classification</dt> @* Label for the classification *@
-                <dd class="col-sm-9">@doc.Classification</dd> @* Display the document classification *@
-                <dt class="col-sm-3">Created</dt> @* Label for the creation date *@
-                <dd class="col-sm-9">@doc.CreatedOn</dd> @* Display the document creation date *@
-            </dl>
-            @* Button to view the document *@
-            @if (doc != null && doc.DocumentType!.Equals("PDF", StringComparison.OrdinalIgnoreCase))
-            {
-                <a class="btn btn-primary"
-                   href="@(string.IsNullOrEmpty(Schema) ? $"/viewpdf/{doc.DocumentId}" : $"/viewpdf/{Schema}/{doc.DocumentId}")"
-                   target="_blank">
-                    View Document
-                </a>
-            }
-            else if (doc != null)
-            {
-               <a class="btn btn-primary"
-                   href="@(string.IsNullOrEmpty(Schema) ? $"/viewtiff/{doc.DocumentId}" : $"/viewtiff/{Schema}/{doc.DocumentId}")"
-                   target="_blank">
-                    View Document
-                </a>
-            }
+    }
+    else if (!string.IsNullOrEmpty(accessError))
+    {
+        <div class="vd-card">
+            <div class="vd-empty" style="color:var(--red);">
+                <i class="bi bi-shield-exclamation"></i>
+                <p><strong>Access Denied</strong></p>
+                <div class="vd-error-detail">@((MarkupString)accessError)</div>
+            </div>
         </div>
-    </div>
-}
+    }
+    else if (doc is null)
+    {
+        <div class="vd-card">
+            <div class="vd-empty" style="color:#d29922;">
+                <i class="bi bi-file-earmark-x"></i>
+                <p><strong>Document Not Found</strong></p>
+                <p style="color:#8b949e;">The requested document could not be found.</p>
+            </div>
+        </div>
+    }
+    else
+    {
+        <div class="vd-card">
+            <div class="vd-header">
+                <div class="vd-title">
+                    <i class="bi bi-file-earmark-text"></i>
+                    @doc.Title
+                </div>
+                <div class="vd-subtitle">
+                    @doc.DocumentNumber
+                    @{
+                        var typeLower = (doc.DocumentType ?? "").ToLowerInvariant();
+                    }
+                    <span class="vd-type-badge @(typeLower == "pdf" ? "pdf" : typeLower == "tiff" ? "tiff" : "other")">@doc.DocumentType</span>
+                </div>
+            </div>
+
+            <div class="vd-body">
+                <div class="vd-grid">
+                    <div>
+                        <div class="vd-field-label">Status</div>
+                        <div class="vd-field-value">
+                            @{
+                                var statusLower = (doc.Status ?? "").ToLowerInvariant();
+                            }
+                            <span class="vd-status-dot @(statusLower == "draft" ? "draft" : statusLower == "final" ? "final" : "archived")"></span>
+                            @(string.IsNullOrEmpty(doc.Status) ? "—" : doc.Status)
+                        </div>
+                    </div>
+                    <div>
+                        <div class="vd-field-label">Document Status</div>
+                        <div class="vd-field-value">@(string.IsNullOrEmpty(doc.DocumentStatus) ? "—" : doc.DocumentStatus)</div>
+                    </div>
+                    <div>
+                        <div class="vd-field-label">Author</div>
+                        <div class="vd-field-value">@(string.IsNullOrEmpty(doc.Author) ? "—" : doc.Author)</div>
+                    </div>
+                    <div>
+                        <div class="vd-field-label">Classification</div>
+                        <div class="vd-field-value">@(string.IsNullOrEmpty(doc.Classification) ? "—" : doc.Classification)</div>
+                    </div>
+                    <div>
+                        <div class="vd-field-label">Project</div>
+                        <div class="vd-field-value">
+                            @(proj?.ProjectName ?? "—")
+                            @if (!string.IsNullOrEmpty(proj?.ProjectCode))
+                            {
+                                <span style="color:#484f58;margin-left:4px;">(@proj.ProjectCode)</span>
+                            }
+                        </div>
+                    </div>
+                    <div>
+                        <div class="vd-field-label">Version</div>
+                        <div class="vd-field-value">@(string.IsNullOrEmpty(doc.Version) ? "—" : doc.Version)</div>
+                    </div>
+                    <div>
+                        <div class="vd-field-label">Issue</div>
+                        <div class="vd-field-value">@(string.IsNullOrEmpty(doc.Issue) ? "—" : doc.Issue)</div>
+                    </div>
+                    <div>
+                        <div class="vd-field-label">Document Index</div>
+                        <div class="vd-field-value">@(string.IsNullOrEmpty(doc.DocumentIndex) ? "—" : doc.DocumentIndex)</div>
+                    </div>
+                    <div>
+                        <div class="vd-field-label">Document Date</div>
+                        <div class="vd-field-value">@(doc.DocumentDate.HasValue ? doc.DocumentDate.Value.ToString("dd MMM yyyy") : "—")</div>
+                    </div>
+                    <div>
+                        <div class="vd-field-label">Keywords</div>
+                        <div class="vd-field-value">@(string.IsNullOrEmpty(doc.Keywords) ? "—" : doc.Keywords)</div>
+                    </div>
+                    @if (!string.IsNullOrEmpty(doc.Memo))
+                    {
+                        <div class="vd-field-full">
+                            <div class="vd-field-label">Memo</div>
+                            <div class="vd-field-value memo">@doc.Memo</div>
+                        </div>
+                    }
+                </div>
+            </div>
+
+            @* ---- References Section ---- *@
+            @if (doc.OldDM.HasValue || doc.CM.HasValue || doc.GM.HasValue || doc.EM.HasValue)
+            {
+                <div class="vd-section">
+                    <div class="vd-section-label"><i class="bi bi-link-45deg"></i> References</div>
+                    <div class="vd-grid">
+                        <div>
+                            <div class="vd-field-label">Old DM</div>
+                            <div class="vd-field-value mono">@(doc.OldDM.HasValue ? doc.OldDM.Value.ToString() : "—")</div>
+                        </div>
+                        <div>
+                            <div class="vd-field-label">CM</div>
+                            <div class="vd-field-value mono">@(doc.CM.HasValue ? doc.CM.Value.ToString() : "—")</div>
+                        </div>
+                        <div>
+                            <div class="vd-field-label">GM</div>
+                            <div class="vd-field-value mono">@(doc.GM.HasValue ? doc.GM.Value.ToString() : "—")</div>
+                        </div>
+                        <div>
+                            <div class="vd-field-label">EM</div>
+                            <div class="vd-field-value mono">@(doc.EM.HasValue ? doc.EM.Value.ToString() : "—")</div>
+                        </div>
+                    </div>
+                </div>
+            }
+
+            @* ---- Custom Text Fields Section ---- *@
+            @{
+                var textFields = new (string Label, string? Value)[]
+                {
+                    ("Text 01", doc.Text01), ("Text 02", doc.Text02), ("Text 03", doc.Text03),
+                    ("Text 04", doc.Text04), ("Text 05", doc.Text05), ("Text 06", doc.Text06),
+                    ("Text 07", doc.Text07), ("Text 08", doc.Text08), ("Text 09", doc.Text09),
+                    ("Text 10", doc.Text10), ("Text 11", doc.Text11), ("Text 12", doc.Text12)
+                };
+                var populatedTexts = textFields.Where(f => !string.IsNullOrEmpty(f.Value)).ToList();
+            }
+            @if (populatedTexts.Count > 0)
+            {
+                <div class="vd-section">
+                    <div class="vd-section-label"><i class="bi bi-card-text"></i> Custom Text Fields</div>
+                    <div class="vd-grid">
+                        @foreach (var f in populatedTexts)
+                        {
+                            <div>
+                                <div class="vd-field-label">@f.Label</div>
+                                <div class="vd-field-value">@f.Value</div>
+                            </div>
+                        }
+                    </div>
+                </div>
+            }
+
+            @* ---- Custom Dates & Numbers Section ---- *@
+            @{
+                var dateFields = new (string Label, DateTime? Value)[]
+                {
+                    ("Date 01", doc.Date01), ("Date 02", doc.Date02),
+                    ("Date 03", doc.Date03), ("Date 04", doc.Date04)
+                };
+                var populatedDates = dateFields.Where(f => f.Value.HasValue).ToList();
+
+                var numberFields = new (string Label, double? Value)[]
+                {
+                    ("Number 01", doc.Number01), ("Number 02", doc.Number02), ("Number 03", doc.Number03)
+                };
+                var populatedNumbers = numberFields.Where(f => f.Value.HasValue).ToList();
+
+                var boolFields = new (string Label, bool? Value)[]
+                {
+                    ("Boolean 01", doc.Boolean01), ("Boolean 02", doc.Boolean02), ("Boolean 03", doc.Boolean03)
+                };
+                var populatedBools = boolFields.Where(f => f.Value.HasValue).ToList();
+            }
+            @if (populatedDates.Count > 0 || populatedNumbers.Count > 0 || populatedBools.Count > 0)
+            {
+                <div class="vd-section">
+                    <div class="vd-section-label"><i class="bi bi-sliders"></i> Custom Fields</div>
+                    <div class="vd-grid">
+                        @foreach (var f in populatedDates)
+                        {
+                            <div>
+                                <div class="vd-field-label">@f.Label</div>
+                                <div class="vd-field-value">@f.Value!.Value.ToString("dd MMM yyyy")</div>
+                            </div>
+                        }
+                        @foreach (var f in populatedNumbers)
+                        {
+                            <div>
+                                <div class="vd-field-label">@f.Label</div>
+                                <div class="vd-field-value mono">@f.Value!.Value</div>
+                            </div>
+                        }
+                        @foreach (var f in populatedBools)
+                        {
+                            <div>
+                                <div class="vd-field-label">@f.Label</div>
+                                <div class="vd-field-value">
+                                    @if (f.Value == true)
+                                    {
+                                        <i class="bi bi-check-circle" style="color:#3fb950;"></i> <span>Yes</span>
+                                    }
+                                    else
+                                    {
+                                        <i class="bi bi-x-circle" style="color:#484f58;"></i> <span>No</span>
+                                    }
+                                </div>
+                            </div>
+                        }
+                    </div>
+                </div>
+            }
+
+            @* ---- System Information Section ---- *@
+            <div class="vd-section">
+                <div class="vd-section-label"><i class="bi bi-gear"></i> System</div>
+                <div class="vd-grid">
+                    <div>
+                        <div class="vd-field-label">Document ID</div>
+                        <div class="vd-field-value mono">@doc.DocumentId</div>
+                    </div>
+                    <div>
+                        <div class="vd-field-label">Project ID</div>
+                        <div class="vd-field-value mono">@(doc.ProjectId.HasValue ? doc.ProjectId.Value.ToString() : "—")</div>
+                    </div>
+                    <div>
+                        <div class="vd-field-label">Created</div>
+                        <div class="vd-field-value">@doc.CreatedOn.ToString("dd MMM yyyy, HH:mm")</div>
+                    </div>
+                    <div>
+                        <div class="vd-field-label">Created By</div>
+                        <div class="vd-field-value mono">@doc.CreatedBy</div>
+                    </div>
+                    <div>
+                        <div class="vd-field-label">Modified</div>
+                        <div class="vd-field-value">@(doc.ModifiedOn.HasValue ? doc.ModifiedOn.Value.ToString("dd MMM yyyy, HH:mm") : "—")</div>
+                    </div>
+                    <div>
+                        <div class="vd-field-label">Modified By</div>
+                        <div class="vd-field-value mono">@(doc.ModifiedBy.HasValue ? doc.ModifiedBy.Value.ToString() : "—")</div>
+                    </div>
+                    <div>
+                        <div class="vd-field-label">Public Token</div>
+                        <div class="vd-field-value mono" style="font-size:0.68rem;">@(string.IsNullOrEmpty(doc.PublicToken) ? "—" : doc.PublicToken)</div>
+                    </div>
+                    @if (!string.IsNullOrEmpty(doc.FilePath))
+                    {
+                        <div>
+                            <div class="vd-field-label">File Path</div>
+                            <div class="vd-field-value mono" style="font-size:0.68rem;">@doc.FilePath</div>
+                        </div>
+                    }
+                </div>
+            </div>
+
+            <div class="vd-actions">
+                @if (doc.DocumentType!.Equals("PDF", StringComparison.OrdinalIgnoreCase))
+                {
+                    <a class="vd-btn primary" href="/viewpdf/@doc.PublicToken" target="_blank">
+                        <i class="bi bi-eye"></i> View Document
+                    </a>
+                }
+                else
+                {
+                    <a class="vd-btn primary" href="/viewtiff/@doc.PublicToken" target="_blank">
+                        <i class="bi bi-eye"></i> View Document
+                    </a>
+                }
+                <a class="vd-btn secondary" href="/" title="Back to search">
+                    <i class="bi bi-arrow-left"></i> Back
+                </a>
+            </div>
+        </div>
+    }
+</div>
 
 @* ============================================================================
    Code-Behind Logic for the ViewDoc Page
    ============================================================================ *@
 @code {
-    [Parameter] public int DocumentId { get; set; } @* Document ID parameter *@
+    [Parameter] public string Token { get; set; } = null!; @* Opaque document token parameter *@
     [Parameter] public string? Schema { get; set; } @* Schema parameter *@
     Document? doc; @* Holds the document metadata *@
     Project? proj; @* Holds the associated project metadata *@
@@ -141,15 +563,8 @@ else @* If the document is found, display its metadata *@
                 return;
             }
 
-            // First, fetch the document to get the project ID
-            if (!string.IsNullOrEmpty(Schema))
-            {
-                doc = await Repo.GetDocumentAsync("DefaultConnection", Schema, DocumentId);
-            }
-            else
-            {
-                doc = await Repo.GetDocumentAsync("DefaultConnection", DocumentId);
-            }
+            // First, fetch the document by token
+            doc = await Repo.GetDocumentByTokenAsync(Token);
 
             if (doc == null)
             {

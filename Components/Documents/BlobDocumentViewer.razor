@@ -3,6 +3,148 @@
 @inject DocumentRepository Repo
 @inject IJSRuntime JSRuntime
 @rendermode InteractiveServer
+@implements IAsyncDisposable
+
+<style>
+    .blob-viewer-container {
+        display: flex;
+        flex-direction: column;
+        height: calc(100vh - 64px);
+        background: #1a1a2e;
+        color: #e0e0e0;
+        margin: -1rem -1.5rem 0 -1.5rem;
+        width: calc(100% + 3rem);
+    }
+
+    .blob-viewer-container:fullscreen {
+        height: 100vh;
+        margin: 0;
+        width: 100%;
+    }
+    .blob-viewer-toolbar {
+        flex-shrink: 0;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 6px 12px;
+        background: #1e1e2e;
+        border-bottom: 1px solid #333;
+        gap: 8px;
+        flex-wrap: nowrap;
+    }
+    .blob-viewer-toolbar .toolbar-section {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+    .blob-viewer-toolbar .btn {
+        padding: 2px 8px;
+        font-size: 0.8rem;
+    }
+    .blob-viewer-toolbar .title-text {
+        font-size: 0.85rem;
+        color: #ccc;
+        white-space: nowrap;
+    }
+    .blob-viewer-toolbar .title-text strong {
+        color: #fff;
+    }
+    .blob-viewer-body {
+        flex: 1;
+        display: flex;
+        min-height: 0;
+    }
+    .blob-viewer-document {
+        flex: 1;
+        min-width: 0;
+        overflow: auto;
+        background: #525659;
+        padding: 4px 0;
+    }
+    .blob-viewer-info-panel {
+        width: 300px;
+        flex-shrink: 0;
+        background: #1e1e2e;
+        border-left: 1px solid #333;
+        overflow-y: auto;
+        transition: width 0.2s ease, opacity 0.2s ease;
+    }
+    .blob-viewer-info-panel.collapsed {
+        width: 0;
+        overflow: hidden;
+        opacity: 0;
+        border-left: none;
+    }
+    .blob-viewer-info-panel .panel-header {
+        padding: 10px 14px;
+        border-bottom: 1px solid #333;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+    }
+    .blob-viewer-info-panel .panel-header h6 {
+        margin: 0;
+        font-size: 0.85rem;
+        color: #ccc;
+    }
+    .blob-viewer-info-panel .panel-body {
+        padding: 12px 14px;
+    }
+    .blob-viewer-info-panel .info-label {
+        font-size: 0.75rem;
+        color: #888;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-bottom: 2px;
+    }
+    .blob-viewer-info-panel .info-value {
+        font-size: 0.85rem;
+        color: #ddd;
+        margin-bottom: 10px;
+        word-break: break-all;
+    }
+    .blob-viewer-info-panel .btn-group-vertical .btn {
+        font-size: 0.78rem;
+        padding: 3px 8px;
+    }
+    .info-toggle-btn {
+        background: none;
+        border: 1px solid #555;
+        color: #aaa;
+        padding: 2px 6px;
+        font-size: 0.8rem;
+        cursor: pointer;
+        border-radius: 3px;
+    }
+    .info-toggle-btn:hover {
+        color: #fff;
+        border-color: #888;
+    }
+    .toolbar-sep {
+        color: #444;
+        margin: 0 2px;
+        user-select: none;
+    }
+    .page-input {
+        width: 48px;
+        text-align: center;
+        background: #2a2a3a;
+        border: 1px solid #555;
+        color: #ddd;
+        font-size: 0.82rem;
+        padding: 1px 4px;
+        border-radius: 3px;
+    }
+    .page-input:focus {
+        outline: none;
+        border-color: #7b8cff;
+    }
+    .blob-viewer-osd {
+        flex: 1;
+        min-width: 0;
+        background: #2a2a3a;
+    }
+</style>
 
 <div class="blob-document-viewer">
     @if (isLoading)
@@ -29,108 +171,110 @@
     }
     else
     {
-        <!-- Document Header -->
-        <div class="card mb-3">
-            <div class="card-header">
-                <div class="row align-items-center">
-                    <div class="col">
-                        <h5 class="mb-0">Document Viewer - Document ID: @DocumentId</h5>
-                        <small class="text-muted">@pages.Count page(s) ï¿½ Storage: @(pages.First().UsesBlobStorage ? "BLOB" : "File System")</small>
-                    </div>
-                    <div class="col-auto">
-                        <div class="btn-group">
-                            <button class="btn btn-outline-secondary btn-sm" @onclick="ZoomOut" disabled="@(zoomLevel <= 50)">
-                                <i class="bi bi-zoom-out"></i>
-                            </button>
-                            <button class="btn btn-outline-secondary btn-sm disabled">
-                                @zoomLevel%
-                            </button>
-                            <button class="btn btn-outline-secondary btn-sm" @onclick="ZoomIn" disabled="@(zoomLevel >= 200)">
-                                <i class="bi bi-zoom-in"></i>
-                            </button>
-                            <button class="btn btn-outline-secondary btn-sm" @onclick="ResetZoom">
-                                <i class="bi bi-aspect-ratio"></i>
-                            </button>
-                        </div>
-                    </div>
+        <div class="blob-viewer-container">
+            <!-- Toolbar -->
+            <div class="blob-viewer-toolbar">
+                <div class="toolbar-section">
+                    <span class="title-text"><strong>Document @DocumentId</strong></span>
                 </div>
-            </div>
-        </div>
 
-        <!-- Page Navigation -->
-        @if (pages.Count > 1)
-        {
-            <div class="card mb-3">
-                <div class="card-body py-2">
-                    <div class="d-flex justify-content-between align-items-center">
-                        <div>
-                            <button class="btn btn-outline-primary btn-sm" 
-                                    @onclick="PreviousPage" 
-                                    disabled="@(currentPageIndex <= 0)">
-                                <i class="bi bi-chevron-left"></i> Previous
-                            </button>
-                            <button class="btn btn-outline-primary btn-sm ms-2" 
-                                    @onclick="NextPage" 
-                                    disabled="@(currentPageIndex >= pages.Count - 1)">
-                                Next <i class="bi bi-chevron-right"></i>
-                            </button>
-                        </div>
-                        
-                        <div>
-                            <span class="me-2">Page:</span>
-                            <div class="btn-group">
-                                @for (int i = 0; i < pages.Count; i++)
-                                {
-                                    int pageIndex = i; // Capture for closure
-                                    <button class="btn btn-sm @(i == currentPageIndex ? "btn-primary" : "btn-outline-secondary")"
-                                            @onclick="() => GoToPage(pageIndex)">
-                                        @pages[i].PageNumber
-                                    </button>
-                                }
-                            </div>
-                        </div>
+                <div class="toolbar-section">
+                    @* PDF internal page navigation *@
+                    @if (pdfTotalPages > 1)
+                    {
+                        <button class="btn btn-outline-light btn-sm" @onclick="PreviousPdfPage" disabled="@(currentPdfPage <= 1)" title="Previous page">
+                            <i class="bi bi-chevron-left"></i>
+                        </button>
+                        <input type="number" class="page-input" min="1" max="@pdfTotalPages" value="@currentPdfPage"
+                               @onchange="OnPageInputChanged" title="Go to page" />
+                        <span class="title-text">/ @pdfTotalPages</span>
+                        <button class="btn btn-outline-light btn-sm" @onclick="NextPdfPage" disabled="@(currentPdfPage >= pdfTotalPages)" title="Next page">
+                            <i class="bi bi-chevron-right"></i>
+                        </button>
+                        <span class="toolbar-sep">|</span>
+                    }
 
-                        <div>
-                            <span class="text-muted">
-                                Page @(currentPageIndex + 1) of @pages.Count
-                            </span>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        }
+                    @* Document page navigation (multi-page uploads) *@
+                    @if (pages.Count > 1)
+                    {
+                        <span class="title-text">Doc page:</span>
+                        <button class="btn btn-outline-light btn-sm" @onclick="PreviousDocPage" disabled="@(currentPageIndex <= 0)">
+                            <i class="bi bi-chevron-left"></i>
+                        </button>
+                        <span class="title-text">@(currentPageIndex + 1) / @pages.Count</span>
+                        <button class="btn btn-outline-light btn-sm" @onclick="NextDocPage" disabled="@(currentPageIndex >= pages.Count - 1)">
+                            <i class="bi bi-chevron-right"></i>
+                        </button>
+                        <span class="toolbar-sep">|</span>
+                    }
 
-        <!-- Document Display -->
-        <div class="card">
-            <div class="card-body p-0">
-                <div class="document-display-area" style="height: calc(100vh - 300px); overflow: auto;">
+                    @* Zoom controls *@
+                    <button class="btn btn-outline-light btn-sm" @onclick="ZoomOut" disabled="@(zoomLevel <= 50)" title="Zoom out">
+                        <i class="bi bi-zoom-out"></i>
+                    </button>
+                    <span class="title-text">@zoomLevel%</span>
+                    <button class="btn btn-outline-light btn-sm" @onclick="ZoomIn" disabled="@(zoomLevel >= 300)" title="Zoom in">
+                        <i class="bi bi-zoom-in"></i>
+                    </button>
+                    <button class="btn btn-outline-light btn-sm" @onclick="ResetZoom" title="Reset zoom">
+                        <i class="bi bi-aspect-ratio"></i>
+                    </button>
+                    <button class="btn btn-outline-light btn-sm" @onclick="FitWidth" title="Fit width">
+                        <i class="bi bi-arrows"></i>
+                    </button>
+
+                    @if (currentPage != null && IsImageFile(currentPage))
+                    {
+                        <span class="toolbar-sep">|</span>
+                        <button class="btn btn-outline-light btn-sm" @onclick="RotateLeft" title="Rotate left">
+                            <i class="bi bi-arrow-counterclockwise"></i>
+                        </button>
+                        <button class="btn btn-outline-light btn-sm" @onclick="RotateRight" title="Rotate right">
+                            <i class="bi bi-arrow-clockwise"></i>
+                        </button>
+                    }
+
+                    <span class="toolbar-sep">|</span>
+
+                    @* Actions *@
                     @if (currentPage != null)
                     {
-                        <div class="text-center p-3">
-                            @if (IsPdfFile(currentPage))
-                            {
-                                <!-- Display PDF in iframe -->
-                                <iframe src="@GetPageUrl(currentPage.PageId)" 
-                                        width="100%" 
-                                        height="600px"
-                                        style="transform: scale(@(zoomLevel/100.0)); transform-origin: top left;"
-                                        frameborder="0">
-                                    Your browser does not support PDFs. 
-                                    <a href="@GetPageUrl(currentPage.PageId)" target="_blank">Download the PDF</a>
-                                </iframe>
-                            }
-                            else if (IsImageFile(currentPage))
-                            {
-                                <!-- Display as image -->
-                                <img src="@GetPageUrl(currentPage.PageId)" 
-                                     alt="Page @currentPage.PageNumber"
-                                     class="img-fluid border shadow"
-                                     style="max-width: @(zoomLevel)%; height: auto;" 
-                                     @onclick="ToggleFullscreen" />
-                            }
-                            else
-                            {
-                                <!-- Unsupported file type -->
+                        <a href="@GetDownloadUrl(currentPage.PageId)" class="btn btn-outline-light btn-sm" target="_blank" title="Download">
+                            <i class="bi bi-download"></i>
+                        </a>
+                        <button class="btn btn-outline-light btn-sm" @onclick="() => OpenInNewTab(currentPage.PageId)" title="Open in new tab">
+                            <i class="bi bi-box-arrow-up-right"></i>
+                        </button>
+                    }
+                    <span class="toolbar-sep">|</span>
+
+                    @if (currentPage != null)
+                    {
+                        <a href="@GetReportBadFileUrl()" class="btn btn-outline-warning btn-sm" title="Report bad file">
+                            <i class="bi bi-exclamation-triangle"></i>
+                        </a>
+                    }
+
+                    <span class="toolbar-sep">|</span>
+                    <button class="info-toggle-btn" @onclick="ToggleInfoPanel" title="@(showInfoPanel ? "Hide info" : "Show info")">
+                        <i class="bi bi-info-circle"></i>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Body: Document + Info Panel -->
+            <div class="blob-viewer-body">
+                @if (currentPage != null && !IsPdfFile(currentPage))
+                {
+                    <!-- Image content via OpenSeadragon -->
+                    @if (IsImageFile(currentPage))
+                    {
+                        <div id="@osdContainerId" class="blob-viewer-osd"></div>
+                    }
+                    else
+                    {
+                        <div class="blob-viewer-document">
+                            <div class="d-flex align-items-center justify-content-center h-100">
                                 <div class="alert alert-info">
                                     <i class="bi bi-file-earmark me-2"></i>
                                     <strong>@currentPage.FileType file</strong>
@@ -139,99 +283,138 @@
                                         <i class="bi bi-download me-2"></i>Download @currentPage.FileName
                                     </a>
                                 </div>
+                            </div>
+                        </div>
+                    }
+                }
+                else
+                {
+                    <!-- PDF.js canvas container - Blazor must NOT manage children of this div -->
+                    <div id="@pdfContainerId" class="blob-viewer-document"></div>
+                }
+
+                <!-- Info Panel (right side, collapsible) -->
+                <div class="blob-viewer-info-panel @(showInfoPanel ? "" : "collapsed")">
+                    @if (currentPage != null && showInfoPanel)
+                    {
+                        <div class="panel-header">
+                            <h6><i class="bi bi-info-circle me-1"></i> Page Info</h6>
+                            <button class="info-toggle-btn" @onclick="ToggleInfoPanel" title="Close">
+                                <i class="bi bi-x-lg"></i>
+                            </button>
+                        </div>
+                        <div class="panel-body">
+                            <div class="info-label">File Name</div>
+                            <div class="info-value">@currentPage.FileName</div>
+
+                            <div class="info-label">File Type</div>
+                            <div class="info-value">@currentPage.FileType</div>
+
+                            <div class="info-label">Page Number</div>
+                            <div class="info-value">@currentPage.PageNumber</div>
+
+                            @if (!string.IsNullOrEmpty(currentPage.PageReference))
+                            {
+                                <div class="info-label">Reference</div>
+                                <div class="info-value">@currentPage.PageReference</div>
                             }
+
+                            <div class="info-label">Storage</div>
+                            <div class="info-value">
+                                @if (currentPage.StorageType == 1)
+                                {
+                                    <span class="badge bg-success">BLOB</span>
+                                }
+                                else
+                                {
+                                    <span class="badge bg-warning">File System</span>
+                                }
+                            </div>
+
+                            @if (currentPage.FileSize.HasValue)
+                            {
+                                <div class="info-label">File Size</div>
+                                <div class="info-value">@FormatFileSize(currentPage.FileSize.Value)</div>
+                            }
+
+                            @if (currentPage.UploadedDate.HasValue)
+                            {
+                                <div class="info-label">Uploaded</div>
+                                <div class="info-value">@currentPage.UploadedDate.Value.ToString("MMM dd, yyyy HH:mm")</div>
+                            }
+
+                            @if (pdfTotalPages > 0)
+                            {
+                                <div class="info-label">PDF Pages</div>
+                                <div class="info-value">@pdfTotalPages</div>
+                            }
+
+                            <hr style="border-color: #333;" />
+
+                            <div class="btn-group-vertical w-100">
+                                <a href="@GetDownloadUrl(currentPage.PageId)" class="btn btn-outline-light btn-sm text-start" target="_blank">
+                                    <i class="bi bi-download me-2"></i>Download
+                                </a>
+                                <button class="btn btn-outline-light btn-sm text-start" @onclick="() => OpenInNewTab(currentPage.PageId)">
+                                    <i class="bi bi-box-arrow-up-right me-2"></i>Open in New Tab
+                                </button>
+                            </div>
                         </div>
                     }
                 </div>
             </div>
         </div>
-
-        <!-- Page Information -->
-        @if (currentPage != null)
-        {
-            <div class="card mt-3">
-                <div class="card-header">
-                    <h6 class="mb-0">Page Information</h6>
-                </div>
-                <div class="card-body">
-                    <div class="row">
-                        <div class="col-md-6">
-                            <dl class="row">
-                                <dt class="col-sm-4">File Name:</dt>
-                                <dd class="col-sm-8">@currentPage.FileName</dd>
-                                <dt class="col-sm-4">File Type:</dt>
-                                <dd class="col-sm-8">@currentPage.FileType</dd>
-                                <dt class="col-sm-4">Page Number:</dt>
-                                <dd class="col-sm-8">@currentPage.PageNumber</dd>
-                                @if (!string.IsNullOrEmpty(currentPage.PageReference))
-                                {
-                                    <dt class="col-sm-4">Reference:</dt>
-                                    <dd class="col-sm-8">@currentPage.PageReference</dd>
-                                }
-                            </dl>
-                        </div>
-                        <div class="col-md-6">
-                            <dl class="row">
-                                <dt class="col-sm-4">Storage:</dt>
-                                <dd class="col-sm-8">
-                                    @if (currentPage.UsesBlobStorage)
-                                    {
-                                        <span class="badge bg-success">BLOB Storage</span>
-                                    }
-                                    else
-                                    {
-                                        <span class="badge bg-warning">File System</span>
-                                    }
-                                </dd>
-                                @if (currentPage.FileSize.HasValue)
-                                {
-                                    <dt class="col-sm-4">File Size:</dt>
-                                    <dd class="col-sm-8">@FormatFileSize(currentPage.FileSize.Value)</dd>
-                                }
-                                @if (currentPage.UploadedDate.HasValue)
-                                {
-                                    <dt class="col-sm-4">Uploaded:</dt>
-                                    <dd class="col-sm-8">@currentPage.UploadedDate.Value.ToString("MMM dd, yyyy HH:mm")</dd>
-                                }
-                            </dl>
-                        </div>
-                    </div>
-                    
-                    <div class="mt-3">
-                        <div class="btn-group">
-                            <a href="@GetDownloadUrl(currentPage.PageId)" class="btn btn-outline-primary btn-sm" target="_blank">
-                                <i class="bi bi-download me-2"></i>Download
-                            </a>
-                            <button class="btn btn-outline-secondary btn-sm" @onclick="() => OpenInNewTab(currentPage.PageId)">
-                                <i class="bi bi-box-arrow-up-right me-2"></i>Open in New Tab
-                            </button>
-                            @if (IsImageFile(currentPage))
-                            {
-                                <button class="btn btn-outline-info btn-sm" @onclick="ToggleFullscreen">
-                                    <i class="bi bi-arrows-fullscreen me-2"></i>Fullscreen
-                                </button>
-                            }
-                        </div>
-                    </div>
-                </div>
-            </div>
-        }
     }
 </div>
 
 @code {
     [Parameter] public int DocumentId { get; set; }
+    [Parameter] public string? PdfUrl { get; set; }
+    [Parameter] public string? SchemaName { get; set; }
 
     private List<DocumentPage>? pages;
-    private DocumentPage? currentPage => pages?[currentPageIndex];
+    private DocumentPage? currentPage => pages != null && currentPageIndex < pages.Count ? pages[currentPageIndex] : null;
     private int currentPageIndex = 0;
     private int zoomLevel = 100;
+    private int pdfTotalPages = 0;
+    private int currentPdfPage = 1;
     private bool isLoading = true;
+    private bool isRendering = false;
+    private bool showInfoPanel = false;
+    private bool needsPdfRender = false;
+    private bool needsOsdRender = false;
+    private bool osdInitialized = false;
     private string? errorMessage;
+    private string pdfContainerId = "pdfjs-container";
+    private string osdContainerId = "osd-blob-viewer";
+
+    protected override void OnInitialized()
+    {
+        pdfContainerId = $"pdfjs-container-{DocumentId}";
+        osdContainerId = $"osd-blob-viewer-{DocumentId}";
+    }
 
     protected override async Task OnParametersSetAsync()
     {
         await LoadDocumentPages();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (pages != null && pages.Any())
+        {
+            if (needsPdfRender && currentPage != null && IsPdfFile(currentPage))
+            {
+                needsPdfRender = false;
+                await RenderCurrentPdf();
+            }
+            if (needsOsdRender && currentPage != null && IsImageFile(currentPage))
+            {
+                needsOsdRender = false;
+                await Task.Delay(100);
+                await InitializeOsd();
+            }
+        }
     }
 
     private async Task LoadDocumentPages()
@@ -241,17 +424,39 @@
 
         try
         {
-            pages = await Repo.GetDocumentPagesAsync("DefaultConnection", DocumentId);
-            
-            if (pages == null || !pages.Any())
+            if (!string.IsNullOrEmpty(PdfUrl))
             {
-                errorMessage = "No pages found for this document.";
+                // Direct URL mode (non-BLOB, file-system PDFs)
+                pages = new List<DocumentPage>
+                {
+                    new DocumentPage
+                    {
+                        PageId = 0,
+                        DocumentId = DocumentId,
+                        PageNumber = 1,
+                        FileName = "document.pdf",
+                        FileType = "PDF",
+                        ContentType = "application/pdf",
+                        StorageType = 0
+                    }
+                };
+                currentPageIndex = 0;
             }
             else
             {
-                // Sort pages by page number
-                pages = pages.OrderBy(p => p.PageNumber).ToList();
-                currentPageIndex = 0;
+                pages = !string.IsNullOrEmpty(SchemaName)
+                    ? await Repo.GetDocumentPagesAsync("DefaultConnection", SchemaName, DocumentId)
+                    : await Repo.GetDocumentPagesAsync("DefaultConnection", DocumentId);
+
+                if (pages == null || !pages.Any())
+                {
+                    errorMessage = "No pages found for this document.";
+                }
+                else
+                {
+                    pages = pages.OrderBy(p => p.PageNumber).ToList();
+                    currentPageIndex = 0;
+                }
             }
         }
         catch (Exception ex)
@@ -261,98 +466,256 @@
         finally
         {
             isLoading = false;
+            needsPdfRender = true;
+            needsOsdRender = true;
         }
     }
 
-    private void NextPage()
+    private async Task RenderCurrentPdf()
+    {
+        if (currentPage == null) return;
+        if (!IsPdfFile(currentPage)) return;
+
+        try
+        {
+            string url;
+            if (!string.IsNullOrEmpty(PdfUrl))
+            {
+                url = PdfUrl;
+            }
+            else
+            {
+                url = GetPageUrl(currentPage.PageId);
+            }
+
+            double scale = zoomLevel / 100.0;
+            pdfTotalPages = await JSRuntime.InvokeAsync<int>("PdfJsViewer.render", pdfContainerId, url, scale);
+            currentPdfPage = 1;
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error rendering PDF: {ex.Message}";
+        }
+        finally
+        {
+            StateHasChanged();
+        }
+    }
+
+    // -- PDF internal page navigation --
+
+    private async Task NextPdfPage()
+    {
+        if (currentPdfPage < pdfTotalPages)
+        {
+            currentPdfPage++;
+            await JSRuntime.InvokeVoidAsync("PdfJsViewer.scrollToPage", pdfContainerId, currentPdfPage);
+        }
+    }
+
+    private async Task PreviousPdfPage()
+    {
+        if (currentPdfPage > 1)
+        {
+            currentPdfPage--;
+            await JSRuntime.InvokeVoidAsync("PdfJsViewer.scrollToPage", pdfContainerId, currentPdfPage);
+        }
+    }
+
+    private async Task OnPageInputChanged(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out int page) && page >= 1 && page <= pdfTotalPages)
+        {
+            currentPdfPage = page;
+            await JSRuntime.InvokeVoidAsync("PdfJsViewer.scrollToPage", pdfContainerId, currentPdfPage);
+        }
+    }
+
+    // -- Document page navigation (multi-page uploads) --
+
+    private async Task NextDocPage()
     {
         if (pages != null && currentPageIndex < pages.Count - 1)
         {
             currentPageIndex++;
+            await SwitchDocPage();
         }
     }
 
-    private void PreviousPage()
+    private async Task PreviousDocPage()
     {
         if (currentPageIndex > 0)
         {
             currentPageIndex--;
+            await SwitchDocPage();
         }
     }
 
-    private void GoToPage(int pageIndex)
+    private async Task SwitchDocPage()
     {
-        if (pages != null && pageIndex >= 0 && pageIndex < pages.Count)
+        if (currentPage == null) return;
+
+        if (IsPdfFile(currentPage))
         {
-            currentPageIndex = pageIndex;
+            osdInitialized = false;
+            await RenderCurrentPdf();
+        }
+        else if (IsImageFile(currentPage))
+        {
+            needsOsdRender = true;
+            StateHasChanged();
         }
     }
 
-    private void ZoomIn()
+    // -- Zoom --
+
+    private async Task ZoomIn()
     {
-        if (zoomLevel < 200)
+        if (currentPage != null && IsImageFile(currentPage) && osdInitialized)
+        {
+            await JSRuntime.InvokeVoidAsync("DocViewer.zoomIn", osdContainerId);
+            return;
+        }
+        if (zoomLevel < 300)
         {
             zoomLevel += 25;
+            await ApplyZoom();
         }
     }
 
-    private void ZoomOut()
+    private async Task ZoomOut()
     {
+        if (currentPage != null && IsImageFile(currentPage) && osdInitialized)
+        {
+            await JSRuntime.InvokeVoidAsync("DocViewer.zoomOut", osdContainerId);
+            return;
+        }
         if (zoomLevel > 50)
         {
             zoomLevel -= 25;
+            await ApplyZoom();
         }
     }
 
-    private void ResetZoom()
+    private async Task ResetZoom()
     {
+        if (currentPage != null && IsImageFile(currentPage) && osdInitialized)
+        {
+            await JSRuntime.InvokeVoidAsync("DocViewer.home", osdContainerId);
+            return;
+        }
         zoomLevel = 100;
+        await ApplyZoom();
     }
 
-    private async Task ToggleFullscreen()
+    private async Task FitWidth()
     {
-        await JSRuntime.InvokeVoidAsync("eval", "document.documentElement.requestFullscreen()");
+        if (currentPage != null && IsImageFile(currentPage) && osdInitialized)
+        {
+            await JSRuntime.InvokeVoidAsync("DocViewer.home", osdContainerId);
+            return;
+        }
+        zoomLevel = 100;
+        await ApplyZoom();
     }
+
+    private async Task ApplyZoom()
+    {
+        if (currentPage != null && IsPdfFile(currentPage))
+        {
+            double scale = zoomLevel / 100.0;
+            await JSRuntime.InvokeVoidAsync("PdfJsViewer.setScale", pdfContainerId, scale);
+        }
+    }
+
+    // -- Actions --
+
+    private void ToggleInfoPanel() => showInfoPanel = !showInfoPanel;
 
     private async Task OpenInNewTab(int pageId)
     {
-        var url = GetPageUrl(pageId);
+        var url = !string.IsNullOrEmpty(PdfUrl) ? PdfUrl : GetPageUrl(pageId);
         await JSRuntime.InvokeVoidAsync("window.open", url, "_blank");
     }
 
-    private string GetPageUrl(int pageId)
+    private string GetPageUrl(int pageId) => $"/api/DocumentBlob/page/{pageId}";
+
+    // -- OpenSeadragon for images --
+
+    private async Task InitializeOsd()
     {
-        return $"/api/DocumentBlob/page/{pageId}";
+        if (currentPage == null || !IsImageFile(currentPage)) return;
+
+        try
+        {
+            if (currentPage.StorageType == 1)
+            {
+                await JSRuntime.InvokeVoidAsync("DocViewer.initTiled", osdContainerId, currentPage.PageId);
+            }
+            else
+            {
+                await JSRuntime.InvokeVoidAsync("DocViewer.initSimple", osdContainerId, GetPageUrl(currentPage.PageId));
+            }
+            osdInitialized = true;
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error initializing image viewer: {ex.Message}";
+            StateHasChanged();
+        }
+    }
+
+    private async Task RotateLeft()
+    {
+        if (osdInitialized)
+            await JSRuntime.InvokeVoidAsync("DocViewer.rotateLeft", osdContainerId);
+    }
+
+    private async Task RotateRight()
+    {
+        if (osdInitialized)
+            await JSRuntime.InvokeVoidAsync("DocViewer.rotateRight", osdContainerId);
     }
 
     private string GetDownloadUrl(int pageId)
     {
+        if (!string.IsNullOrEmpty(PdfUrl)) return PdfUrl;
         return $"/api/DocumentBlob/page/{pageId}/download";
     }
 
+    private string GetReportBadFileUrl()
+    {
+        var url = $"report-bad-file?documentId={DocumentId}";
+        if (!string.IsNullOrEmpty(SchemaName))
+            url += $"&schema={Uri.EscapeDataString(SchemaName)}";
+        if (currentPage != null)
+        {
+            url += $"&pageId={currentPage.PageId}&pageNumber={currentPage.PageNumber}";
+            if (!string.IsNullOrEmpty(currentPage.FileName))
+                url += $"&fileName={Uri.EscapeDataString(currentPage.FileName)}";
+        }
+        return url;
+    }
+
+    // -- File type checks --
+
     private static bool IsImageFile(DocumentPage page)
     {
-        // Check both ContentType and FileType to determine if it's an image
         var imageContentTypes = new[] { "image/tiff", "image/tif", "image/jpeg", "image/jpg", "image/png", "image/bmp", "image/gif" };
         var imageFileTypes = new[] { "TIFF", "TIF", "JPEG", "JPG", "PNG", "BMP", "GIF" };
-        
+
         if (!string.IsNullOrEmpty(page.ContentType))
-        {
             return imageContentTypes.Any(ct => page.ContentType.Contains(ct, StringComparison.OrdinalIgnoreCase));
-        }
-        
-        return imageFileTypes.Contains(page.FileType.ToUpperInvariant());
+
+        return !string.IsNullOrEmpty(page.FileType) && imageFileTypes.Contains(page.FileType.ToUpperInvariant());
     }
 
     private static bool IsPdfFile(DocumentPage page)
     {
-        // Check ContentType first (more reliable), then fall back to FileType
         if (!string.IsNullOrEmpty(page.ContentType))
-        {
             return page.ContentType.Contains("pdf", StringComparison.OrdinalIgnoreCase);
-        }
-        
-        return page.FileType.Equals("PDF", StringComparison.OrdinalIgnoreCase);
+
+        return !string.IsNullOrEmpty(page.FileType) && page.FileType.Equals("PDF", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string FormatFileSize(long bytes)
@@ -363,8 +726,24 @@
         while (len >= 1024 && order < sizes.Length - 1)
         {
             order++;
-            len = len / 1024;
+            len /= 1024;
         }
         return $"{len:0.##} {sizes[order]}";
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        try
+        {
+            await JSRuntime.InvokeVoidAsync("PdfJsViewer.destroy", pdfContainerId);
+        }
+        catch { }
+
+        try
+        {
+            if (osdInitialized)
+                await JSRuntime.InvokeVoidAsync("DocViewer.destroy", osdContainerId);
+        }
+        catch { }
     }
 }

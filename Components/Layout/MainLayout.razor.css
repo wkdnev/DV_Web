@@ -55,6 +55,8 @@ main {
     overflow-y: auto; /* Allow main content to scroll independently */
     display: flex;
     flex-direction: column;
+    background: var(--bg-body);
+    color: var(--text);
 }
 
 .content {

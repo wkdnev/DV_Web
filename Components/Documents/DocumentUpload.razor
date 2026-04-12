@@ -1,9 +1,11 @@
 ﻿@using DV.Web.Services
 @using DV.Shared.Security
+@using DV.Shared.DTOs
 @using Microsoft.EntityFrameworkCore
 @using DV.Shared.Models
 @inject DocumentUploadService DocumentUploadService
 @inject DocumentRepository DocumentRepository
+@inject NotificationApiService NotificationService
 @inject IJSRuntime JSRuntime
 @inject IDbContextFactory<SecurityDbContext> SecurityDbContextFactory
 @inject AuthenticationStateProvider AuthenticationStateProvider
@@ -236,8 +238,9 @@
     {
         try
         {
-            // Load available projects
-            var projectList = await DocumentRepository.GetProjectsAsync();
+            // Load available projects filtered by user access (AD + app groups)
+            var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+            var projectList = await DocumentRepository.GetProjectsForUserAsync(authState.User);
             projects = projectList.ToList();
         }
         catch (Exception ex)
@@ -349,6 +352,25 @@
 
             successMessage = $"Successfully uploaded {selectedFile!.Name} for Document {uploadedPage.DocumentId}, Page {pageNumber} in project '{selectedProject.ProjectName}'";
             
+            // SI-5: DocumentUpload notification
+            try
+            {
+                var notifUserId = await ResolveCurrentUserIdAsync();
+                await NotificationService.CreateNotificationAsync(new CreateNotificationDto
+                {
+                    UserId = notifUserId,
+                    Title = "Document Uploaded",
+                    Message = $"File '{selectedFile.Name}' uploaded to Document {uploadedPage.DocumentId}, Page {pageNumber} in '{selectedProject.ProjectName}'.",
+                    Category = NotificationCategories.DocumentUpload,
+                    SourceSystem = NotificationSources.Web,
+                    CorrelationId = $"doc-{uploadedPage.DocumentId}-page-{pageNumber}"
+                });
+            }
+            catch (Exception notifEx)
+            {
+                Console.WriteLine($"Failed to create upload notification: {notifEx.Message}");
+            }
+
             // Clear form
             ClearForm();
 

@@ -1,0 +1,737 @@
+@page "/manage"
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.AspNetCore.Components.Forms
+@inject DocumentRepository Repo
+@inject DocumentUploadService UploadService
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject ProjectSelectionState ProjectSelectionState
+@inject UserService UserService
+@inject AuditService AuditService
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+@attribute [Authorize]
+@implements IDisposable
+@rendermode InteractiveServer
+
+<PageTitle>Manage - @(ProjectSelectionState.SelectedProjectName ?? "Document Viewer")</PageTitle>
+
+@if (!hasAccess)
+{
+    <div class="mg-page">
+        <div class="mg-empty">
+            @if (isLoading)
+            {
+                <div class="mg-spinner"></div>
+                <p>Verifying access...</p>
+            }
+            else
+            {
+                <i class="bi bi-shield-lock" style="font-size:2.5rem;opacity:0.3;color:var(--red);"></i>
+                <h3 style="color:var(--text-bright);">Access Denied</h3>
+                <p style="color:var(--text-secondary);">@accessDeniedMessage</p>
+                <a href="/" class="mg-btn primary" style="margin-top:8px;">
+                    <i class="bi bi-arrow-left"></i>Back to Browse
+                </a>
+            }
+        </div>
+    </div>
+}
+else
+{
+    <!-- Editors Dashboard -->
+    <div class="mg-page">
+        <!-- Project Header -->
+        <div class="mg-header">
+            <div class="mg-header-inner">
+                <div class="mg-header-left">
+                    <div class="mg-header-icon">
+                        <i class="bi bi-pencil-square"></i>
+                    </div>
+                    <div>
+                        <div class="mg-header-title">@ProjectSelectionState.SelectedProjectName</div>
+                        <div class="mg-header-sub">
+                            <i class="bi bi-database"></i> Schema: @ProjectSelectionState.SelectedSchemaName
+                            @if (documentCount.HasValue)
+                            {
+                                <span style="margin-left:12px;"><i class="bi bi-file-earmark"></i> @documentCount documents</span>
+                            }
+                        </div>
+                    </div>
+                </div>
+                <button class="mg-btn secondary" @onclick="RefreshData">
+                    <i class="bi bi-arrow-clockwise"></i>Refresh
+                </button>
+            </div>
+        </div>
+
+        <!-- Action Cards -->
+        <div class="mg-cards">
+            <!-- Import / Upload Card -->
+            <div class="mg-card">
+                <div class="mg-card-header">
+                    <i class="bi bi-cloud-upload" style="color:var(--accent);"></i>
+                    <strong>Import / Upload Documents</strong>
+                </div>
+                <div class="mg-card-body">
+                    <p class="mg-hint">
+                        Upload document files (PDF, TIFF, JPG, PNG) to this project.
+                        Files are validated and securely stored as BLOBs.
+                    </p>
+
+                    @if (showUploadForm)
+                    {
+                        <div class="mg-upload-section">
+                            <div class="mg-field">
+                                <label class="mg-label">Document Index (optional)</label>
+                                <input class="mg-input" @bind="uploadDocumentIndex"
+                                       placeholder="e.g. INV-2026-001" />
+                            </div>
+                            <div class="mg-field">
+                                <label class="mg-label">Select File</label>
+                                <InputFile class="mg-input" OnChange="OnFileSelected"
+                                           accept=".pdf,.tiff,.tif,.jpg,.jpeg,.png,.bmp,.gif" />
+                                <div class="mg-form-text">
+                                    Supported: PDF, TIFF, JPG, PNG, BMP, GIF (max 50MB)
+                                </div>
+                            </div>
+
+                            <div class="mg-form-text" style="margin-top:4px;">
+                                Need to upload multiple files?
+                                <a href="/manage/bulk-upload" style="color:var(--accent);">Use Bulk Upload</a>
+                            </div>
+
+                            @if (selectedFile != null)
+                            {
+                                <div class="mg-alert info">
+                                    <i class="bi bi-file-earmark"></i>
+                                    <strong>@selectedFile.Name</strong> — @FormatFileSize(selectedFile.Size)
+                                </div>
+                            }
+
+                            <div class="mg-btn-row">
+                                <button class="mg-btn primary" @onclick="UploadFile"
+                                        disabled="@(selectedFile == null || isUploading)">
+                                    @if (isUploading)
+                                    {
+                                        <span class="mg-spinner-sm"></span>
+                                        <span>Uploading...</span>
+                                    }
+                                    else
+                                    {
+                                        <i class="bi bi-upload"></i>
+                                        <span>Upload</span>
+                                    }
+                                </button>
+                                <button class="mg-btn secondary" @onclick="() => showUploadForm = false">
+                                    Cancel
+                                </button>
+                            </div>
+                        </div>
+                    }
+                    else
+                    {
+                        <button class="mg-btn primary" @onclick="() => showUploadForm = true">
+                            <i class="bi bi-plus-lg"></i>New Upload
+                        </button>
+                    }
+
+                    @if (uploadMessage != null)
+                    {
+                        <div class="mg-alert @(uploadSuccess ? "success" : "error")">
+                            <i class="bi @(uploadSuccess ? "bi-check-circle" : "bi-exclamation-triangle")"></i>
+                            @uploadMessage
+                        </div>
+                    }
+                </div>
+            </div>
+
+            <!-- Bulk Upload Card -->
+            <div class="mg-card">
+                <div class="mg-card-header">
+                    <i class="bi bi-cloud-arrow-up" style="color:var(--gold, #e3b341);"></i>
+                    <strong>Bulk Upload</strong>
+                </div>
+                <div class="mg-card-body">
+                    <p class="mg-hint">
+                        Upload multiple files at once from folders, ZIP archives, or CSV-driven import
+                        with full metadata management. Minimum 2 files per batch.
+                    </p>
+                    <a href="/manage/bulk-upload" class="mg-btn primary">
+                        <i class="bi bi-cloud-arrow-up"></i>Open Bulk Upload
+                    </a>
+                </div>
+            </div>
+
+            <!-- Bulk Export Card -->
+            <div class="mg-card">
+                <div class="mg-card-header">
+                    <i class="bi bi-cloud-arrow-down" style="color:var(--accent);"></i>
+                    <strong>Bulk Export</strong>
+                </div>
+                <div class="mg-card-body">
+                    <p class="mg-hint">
+                        Export all documents and files from this project as a ZIP archive or to a folder.
+                        Includes metadata CSV compatible with Bulk Upload for re-import.
+                    </p>
+                    <a href="/manage/bulk-export" class="mg-btn primary">
+                        <i class="bi bi-cloud-arrow-down"></i>Open Bulk Export
+                    </a>
+                </div>
+            </div>
+        </div>
+
+        <!-- Documents Table -->
+        <div class="mg-card">
+            <div class="mg-card-header" style="justify-content:space-between;">
+                <div style="display:flex;align-items:center;gap:8px;">
+                    <i class="bi bi-table" style="color:var(--text-secondary);"></i>
+                    <strong>Project Documents</strong>
+                    @if (documentCount.HasValue)
+                    {
+                        <span class="mg-badge">@documentCount</span>
+                    }
+                </div>
+                <div style="display:flex;align-items:center;gap:6px;">
+                    <input class="mg-input" style="width:250px;"
+                           @bind="tableSearchTerm" @bind:after="SearchDocuments"
+                           placeholder="Search documents..." />
+                    <button class="mg-btn secondary" @onclick="SearchDocuments">
+                        <i class="bi bi-search"></i>
+                    </button>
+                </div>
+            </div>
+            <div class="mg-table-wrap">
+                @if (isLoadingDocuments)
+                {
+                    <div class="mg-empty" style="padding:2rem;">
+                        <div class="mg-spinner"></div>
+                    </div>
+                }
+                else if (documents == null || documents.Count == 0)
+                {
+                    <div class="mg-empty" style="padding:2rem;">
+                        <i class="bi bi-inbox" style="font-size:2.5rem;opacity:0.2;"></i>
+                        <p>No documents found in this project.</p>
+                    </div>
+                }
+                else
+                {
+                    <div class="mg-table-scroll">
+                        <table class="mg-table">
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>Document Number</th>
+                                    <th>Title</th>
+                                    <th>Author</th>
+                                    <th>Type</th>
+                                    <th>Status</th>
+                                    <th>Created</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var doc in documents)
+                                {
+                                    <tr>
+                                        <td class="mono">@doc.DocumentId</td>
+                                        <td><strong>@doc.DocumentNumber</strong></td>
+                                        <td>@doc.Title</td>
+                                        <td>@doc.Author</td>
+                                        <td><span class="mg-type-badge">@doc.DocumentType</span></td>
+                                        <td>@doc.Status</td>
+                                        <td class="mono">@doc.CreatedOn.ToString("yyyy-MM-dd")</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+
+                    @if (totalPages > 1)
+                    {
+                        <div class="mg-pagination">
+                            <span class="mg-page-info">Page <strong>@currentPage</strong> of <strong>@totalPages</strong></span>
+                            <div style="display:flex;gap:4px;">
+                                <button class="mg-page-btn" disabled="@(currentPage <= 1)" @onclick="PreviousPage">
+                                    <i class="bi bi-chevron-left"></i>
+                                </button>
+                                <button class="mg-page-btn" disabled="@(currentPage >= totalPages)" @onclick="NextPage">
+                                    <i class="bi bi-chevron-right"></i>
+                                </button>
+                            </div>
+                        </div>
+                    }
+                }
+            </div>
+        </div>
+    </div>
+}
+
+<style>
+    /* ── Layout ── */
+    .mg-page {
+        padding: 1rem;
+        max-width: 1400px;
+        margin: 0 auto;
+        color: var(--text);
+    }
+
+    /* ── Empty & Loading states (access-denied) ── */
+    .mg-empty {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 8px;
+        color: var(--text-muted);
+    }
+    .mg-spinner {
+        width: 36px; height: 36px;
+        border: 3px solid var(--border);
+        border-top-color: var(--accent);
+        border-radius: 50%;
+        animation: mg-spin .8s linear infinite;
+    }
+    .mg-spinner-sm {
+        display: inline-block;
+        width: 14px; height: 14px;
+        border: 2px solid var(--border);
+        border-top-color: currentColor;
+        border-radius: 50%;
+        animation: mg-spin .8s linear infinite;
+    }
+    @@keyframes mg-spin { to { transform: rotate(360deg); } }
+
+    /* ── Buttons ── */
+    .mg-btn {
+        display: inline-flex; align-items: center; gap: 6px;
+        padding: 6px 14px; border-radius: 6px;
+        font-size: .85rem; font-weight: 500;
+        cursor: pointer; border: none; transition: background .15s;
+    }
+    .mg-btn.primary  { background: var(--accent); color: #fff; }
+    .mg-btn.primary:hover  { background: var(--accent-hover); }
+    .mg-btn.primary:disabled { opacity:.5; cursor:not-allowed; }
+    .mg-btn.secondary { background: transparent; color: var(--text-secondary);
+        border: 1px solid var(--border); }
+    .mg-btn.secondary:hover { border-color: var(--text-muted); color: var(--text); }
+    /* ── Project Header Banner ── */
+    .mg-header {
+        background: linear-gradient(135deg, rgb(5,39,103) 0%, #3a0647 100%);
+        border-radius: 12px;
+        padding: 1.25rem 1.5rem;
+        margin-bottom: 1.5rem;
+        box-shadow: 0 4px 12px rgba(0,0,0,.25);
+    }
+    .mg-header-inner {
+        display: flex; align-items: center; justify-content: space-between;
+    }
+    .mg-header-left {
+        display: flex; align-items: center; gap: 14px;
+    }
+    .mg-header-icon {
+        width: 48px; height: 48px; border-radius: 12px;
+        background: rgba(255,255,255,.15);
+        display: flex; align-items: center; justify-content: center;
+        font-size: 1.4rem; color: #fff;
+    }
+    .mg-header-title { font-size: 1.25rem; font-weight: 600; color: #fff; }
+    .mg-header-sub   { font-size: .82rem; color: rgba(255,255,255,.55); margin-top: 2px; }
+
+    /* ── Cards Grid ── */
+    .mg-cards {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+        gap: 1rem;
+        margin-bottom: 1rem;
+    }
+    .mg-card {
+        background: var(--bg-surface);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        overflow: hidden;
+        transition: box-shadow .2s;
+    }
+    .mg-card:hover { box-shadow: 0 4px 16px rgba(0,0,0,.2); }
+
+    .mg-card-header {
+        display: flex; align-items: center; gap: 8px;
+        padding: .75rem 1.25rem;
+        background: var(--bg-inset);
+        border-bottom: 1px solid var(--border);
+        font-size: .95rem;
+        color: var(--text-bright);
+    }
+    .mg-card-body {
+        padding: 1rem 1.25rem;
+    }
+    .mg-hint {
+        font-size: .82rem;
+        color: var(--text-muted);
+        margin-bottom: .75rem;
+    }
+
+    /* ── Upload Section ── */
+    .mg-upload-section {
+        border: 2px dashed var(--border);
+        border-radius: 8px;
+        padding: 1.25rem;
+        background: var(--bg-inset);
+    }
+
+    /* ── Form Controls ── */
+    .mg-field { margin-bottom: .75rem; }
+    .mg-label {
+        display: block;
+        font-size: .78rem; font-weight: 600;
+        color: var(--text-secondary);
+        margin-bottom: 4px;
+        text-transform: uppercase;
+        letter-spacing: .4px;
+    }
+    .mg-input {
+        width: 100%; padding: 6px 10px;
+        background: var(--bg-input);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        color: var(--text);
+        font-size: .85rem;
+        outline: none;
+        transition: border-color .15s;
+    }
+    .mg-input:focus { border-color: var(--accent); }
+    .mg-input::file-selector-button {
+        background: var(--accent);
+        color: #fff; border: none;
+        padding: 4px 12px; border-radius: 4px;
+        margin-right: 10px; cursor: pointer;
+    }
+    .mg-form-text {
+        font-size: .75rem; color: var(--text-muted); margin-top: 4px;
+    }
+    .mg-btn-row { display: flex; gap: 8px; margin-top: .75rem; }
+
+    /* ── Alerts ── */
+    .mg-alert {
+        display: flex; align-items: center; gap: 8px;
+        padding: 8px 12px; border-radius: 6px;
+        font-size: .82rem; margin-top: .75rem;
+    }
+    .mg-alert.info    { background: var(--accent-bg-subtle, rgba(88,166,255,.08));
+        border: 1px solid var(--accent); color: var(--text); }
+    .mg-alert.success { background: rgba(63,185,80,.08);
+        border: 1px solid var(--green); color: var(--green-bright); }
+    .mg-alert.error   { background: rgba(248,81,73,.08);
+        border: 1px solid var(--red); color: var(--red); }
+
+    /* ── Badge ── */
+    .mg-badge {
+        font-size: .7rem; padding: 2px 8px; border-radius: 10px;
+        background: var(--accent-bg-subtle, rgba(88,166,255,.12));
+        color: var(--accent); font-weight: 600;
+    }
+
+    /* ── Table ── */
+    .mg-table-wrap { }
+    .mg-table-scroll {
+        max-height: 400px; overflow-y: auto;
+    }
+    .mg-table {
+        width: 100%; border-collapse: collapse; font-size: .82rem;
+    }
+    .mg-table thead {
+        position: sticky; top: 0; z-index: 1;
+    }
+    .mg-table th {
+        padding: 10px 12px;
+        background: var(--bg-inset);
+        color: var(--text-muted);
+        font-size: .72rem; font-weight: 600;
+        text-transform: uppercase; letter-spacing: .5px;
+        border-bottom: 1px solid var(--border);
+        text-align: left;
+    }
+    .mg-table td {
+        padding: 8px 12px;
+        border-bottom: 1px solid var(--border-muted);
+        color: var(--text-secondary);
+    }
+    .mg-table tbody tr:hover {
+        background: rgba(88,166,255,.04);
+    }
+    .mg-table .mono {
+        font-family: 'SFMono-Regular', Consolas, monospace;
+        font-size: .78rem; color: var(--text-muted);
+    }
+    .mg-type-badge {
+        font-size: .72rem; padding: 2px 8px; border-radius: 4px;
+        background: var(--bg-input); color: var(--text-secondary);
+        border: 1px solid var(--border-muted);
+    }
+
+    /* ── Pagination ── */
+    .mg-pagination {
+        display: flex; align-items: center; justify-content: space-between;
+        padding: .75rem 1.25rem;
+        border-top: 1px solid var(--border);
+    }
+    .mg-page-info {
+        font-size: .8rem; color: var(--text-muted);
+    }
+    .mg-page-btn {
+        background: transparent; border: 1px solid var(--border);
+        color: var(--text-secondary); border-radius: 4px;
+        padding: 4px 10px; cursor: pointer; transition: border-color .15s;
+    }
+    .mg-page-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--text); }
+    .mg-page-btn:disabled { opacity: .35; cursor: not-allowed; }
+</style>
+
+@code {
+    // Access control
+    private bool isLoading = true;
+    private bool hasAccess = false;
+    private string accessDeniedMessage = "You do not have edit access to the selected project.";
+
+    // User info
+    private string? currentUsername;
+    private ApplicationUser? currentUser;
+
+    // Documents
+    private List<Document>? documents;
+    private int? documentCount;
+    private bool isLoadingDocuments = false;
+    private string? tableSearchTerm;
+    private int currentPage = 1;
+    private int pageSize = 50;
+    private int totalPages = 1;
+
+    // Upload
+    private bool showUploadForm = false;
+    private IBrowserFile? selectedFile;
+    private string? uploadDocumentIndex;
+    private bool isUploading = false;
+    private string? uploadMessage;
+    private bool uploadSuccess;
+
+    protected override async Task OnInitializedAsync()
+    {
+        ProjectSelectionState.OnChange += OnProjectChanged;
+        await VerifyAccessAndLoad();
+    }
+
+    private async Task VerifyAccessAndLoad()
+    {
+        isLoading = true;
+        hasAccess = false;
+
+        try
+        {
+            if (!ProjectSelectionState.SelectedProjectId.HasValue)
+            {
+                accessDeniedMessage = "No project selected. Please select a project from the Browse page first, then return to Manage.";
+                isLoading = false;
+                return;
+            }
+
+            var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+            var user = authState.User;
+            currentUsername = user.Identity?.Name;
+
+            if (string.IsNullOrEmpty(currentUsername))
+            {
+                accessDeniedMessage = "User not authenticated.";
+                isLoading = false;
+                return;
+            }
+
+            currentUser = await UserService.GetUserByUsernameAsync(currentUsername);
+
+            var projectId = ProjectSelectionState.SelectedProjectId.Value;
+            var canEdit = await Repo.HasProjectEditAccessAsync(user, projectId);
+
+            if (!canEdit)
+            {
+                accessDeniedMessage = $"You do not have edit access to project '{ProjectSelectionState.SelectedProjectName}'. Contact an administrator to be added to the edit group.";
+
+                await AuditService.LogProjectAccessAsync(
+                    currentUsername,
+                    currentUser?.UserId ?? 0,
+                    projectId,
+                    AuditActions.ProjectAccessDenied,
+                    AuditResults.Denied,
+                    $"Edit access denied to Manage page for project '{ProjectSelectionState.SelectedProjectName}'");
+
+                isLoading = false;
+                return;
+            }
+
+            hasAccess = true;
+
+            await AuditService.LogProjectAccessAsync(
+                currentUsername,
+                currentUser?.UserId ?? 0,
+                projectId,
+                AuditActions.AccessProject,
+                AuditResults.Success,
+                $"Edit access granted — Manage page opened for project '{ProjectSelectionState.SelectedProjectName}'");
+
+            await LoadDocuments();
+        }
+        catch (Exception ex)
+        {
+            accessDeniedMessage = $"Error verifying access: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task LoadDocuments()
+    {
+        if (!ProjectSelectionState.SelectedProjectId.HasValue) return;
+
+        isLoadingDocuments = true;
+        try
+        {
+            var allDocs = (await Repo.SearchAsync(
+                "DefaultConnection",
+                tableSearchTerm,
+                currentPage,
+                pageSize,
+                ProjectSelectionState.SelectedProjectId)).ToList();
+
+            documents = allDocs;
+
+            if (string.IsNullOrEmpty(tableSearchTerm))
+            {
+                var countDocs = await Repo.SearchAsync("DefaultConnection", null, 1, 10000, ProjectSelectionState.SelectedProjectId);
+                documentCount = countDocs.Count();
+            }
+            else
+            {
+                documentCount = documents.Count;
+            }
+
+            totalPages = Math.Max(1, (int)Math.Ceiling((double)(documentCount ?? 0) / pageSize));
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Manage: Error loading documents: {ex.Message}");
+        }
+        finally
+        {
+            isLoadingDocuments = false;
+        }
+    }
+
+    private async Task SearchDocuments()
+    {
+        currentPage = 1;
+        await LoadDocuments();
+    }
+
+    private async Task PreviousPage()
+    {
+        if (currentPage > 1)
+        {
+            currentPage--;
+            await LoadDocuments();
+        }
+    }
+
+    private async Task NextPage()
+    {
+        if (currentPage < totalPages)
+        {
+            currentPage++;
+            await LoadDocuments();
+        }
+    }
+
+    private async Task RefreshData()
+    {
+        await VerifyAccessAndLoad();
+    }
+
+    private void OnFileSelected(InputFileChangeEventArgs e)
+    {
+        selectedFile = e.File;
+        uploadMessage = null;
+    }
+
+    private async Task UploadFile()
+    {
+        if (selectedFile == null || !ProjectSelectionState.SelectedProjectId.HasValue
+            || string.IsNullOrEmpty(ProjectSelectionState.SelectedSchemaName)) return;
+
+        var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        if (!await Repo.HasProjectEditAccessAsync(authState.User, ProjectSelectionState.SelectedProjectId.Value))
+        {
+            uploadMessage = "Edit access denied. Your permissions may have changed.";
+            uploadSuccess = false;
+            return;
+        }
+
+        isUploading = true;
+        uploadMessage = null;
+
+        try
+        {
+            var formFile = new FormFileWrapper(selectedFile);
+
+            var userId = currentUser?.UserId ?? 0;
+            var schemaName = ProjectSelectionState.SelectedSchemaName;
+            var projectId = ProjectSelectionState.SelectedProjectId.Value;
+
+            var page = await UploadService.CreateDocumentAndUploadPageAsync(
+                schemaName, projectId, 1, formFile, null, userId, uploadDocumentIndex ?? "");
+
+            uploadMessage = $"Successfully uploaded '{selectedFile.Name}' — Document created (Page ID: {page.PageId}).";
+            uploadSuccess = true;
+
+            selectedFile = null;
+            uploadDocumentIndex = null;
+            showUploadForm = false;
+
+            await LoadDocuments();
+
+            await AuditService.LogSecurityEventAsync(
+                currentUsername ?? "Unknown",
+                currentUser?.UserId,
+                "DOCUMENT_UPLOAD",
+                $"Uploaded file via Manage page to project '{ProjectSelectionState.SelectedProjectName}'",
+                projectId);
+        }
+        catch (Exception ex)
+        {
+            uploadMessage = $"Upload failed: {ex.Message}";
+            uploadSuccess = false;
+        }
+        finally
+        {
+            isUploading = false;
+        }
+    }
+
+    private static string FormatFileSize(long bytes)
+    {
+        if (bytes >= 1048576) return (bytes / 1048576.0).ToString("F1") + " MB";
+        if (bytes >= 1024) return (bytes / 1024.0).ToString("F1") + " KB";
+        return bytes + " B";
+    }
+
+    private async void OnProjectChanged()
+    {
+        await InvokeAsync(async () =>
+        {
+            await VerifyAccessAndLoad();
+            StateHasChanged();
+        });
+    }
+
+    public void Dispose()
+    {
+        ProjectSelectionState.OnChange -= OnProjectChanged;
+    }
+}

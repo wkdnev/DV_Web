@@ -1,0 +1,26 @@
+@implements IDisposable
+@inject ProjectSelectionState ProjectSelectionState
+
+@if (ProjectSelectionState.HasEditAccess && ProjectSelectionState.SelectedProjectId.HasValue)
+{
+    <a href="manage" class="menu-link">
+        <i class="bi bi-pencil-square me-1"></i>Manage
+    </a>
+}
+
+@code {
+    protected override void OnInitialized()
+    {
+        ProjectSelectionState.OnChange += OnStateChanged;
+    }
+
+    private void OnStateChanged()
+    {
+        InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        ProjectSelectionState.OnChange -= OnStateChanged;
+    }
+}

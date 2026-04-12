@@ -3,6 +3,7 @@
 @inject ProjectSelectionState ProjectSelection
 @inject NavigationManager Navigation
 @inject AuthenticationStateProvider AuthStateProvider
+@inject DocumentRepository Repo
 @using System.Security.Claims
 
 <h3>Edit Project: @ProjectName</h3>
@@ -54,7 +55,7 @@ else
              // But strict security requires re-validation.
         }
 
-        // Re-validate permission
+        // Re-validate permission using unified group check (AD + app groups)
         if (ProjectSelection.SelectedProjectId == ProjectId && !string.IsNullOrEmpty(ProjectSelection.EditPrincipal))
         {
              if (user.IsInRole("DV_Global_Admins") || 
@@ -64,7 +65,8 @@ else
              }
              else
              {
-                 hasAccess = user.HasClaim(c => (c.Type == "groups" || c.Type == "role" || c.Type == ClaimTypes.Role) && (c.Value.Equals(ProjectSelection.EditPrincipal, StringComparison.OrdinalIgnoreCase)));
+                 // Check AD claims AND app-managed groups
+                 hasAccess = await Repo.IsUserInGroupAsync(user, ProjectSelection.EditPrincipal);
              }
         }
         else
