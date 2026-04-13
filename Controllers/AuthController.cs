@@ -8,6 +8,8 @@ using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
 using DV.Shared.Interfaces;
+using DV.Shared.Security;
+using DV.Web.Services;
 
 namespace DV.Web.Controllers
 {
@@ -16,12 +18,14 @@ namespace DV.Web.Controllers
         private readonly IConfiguration _configuration;
         private readonly IHttpClientFactory _httpClientFactory;
         private readonly ICredentialService _credentialService;
+        private readonly AuditService _auditService;
 
-        public AuthController(IConfiguration configuration, IHttpClientFactory httpClientFactory, ICredentialService credentialService)
+        public AuthController(IConfiguration configuration, IHttpClientFactory httpClientFactory, ICredentialService credentialService, AuditService auditService)
         {
             _configuration = configuration;
             _httpClientFactory = httpClientFactory;
             _credentialService = credentialService;
+            _auditService = auditService;
         }
 
         /// <summary>
@@ -221,6 +225,9 @@ namespace DV.Web.Controllers
 
                     await HttpContext.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, principal, authProps);
 
+                    // NIST AU-2: Log successful login
+                    await _auditService.LogAuthenticationAsync(localUser.Username, AuditActions.Login, AuditResults.Success, "Local credential login via DV.Web");
+
                     Console.WriteLine($"=== Local Login Successful ===");
                     Console.WriteLine($"User: {localUser.Username} (ID: {localUser.UserId})");
 
@@ -237,6 +244,9 @@ namespace DV.Web.Controllers
             var authMode = _configuration["Auth:Mode"] ?? "ADFS";
             if (authMode.Equals("Internal", StringComparison.OrdinalIgnoreCase))
             {
+                // NIST AU-2: Log failed login attempt
+                await _auditService.LogAuthenticationAsync(username, AuditActions.LoginFailed, AuditResults.Failed, "Invalid credentials in Internal auth mode via DV.Web");
+
                 ViewData["Error"] = "Invalid username or password. Please try again.";
                 ViewData["Username"] = username;
                 ViewData["ReturnUrl"] = returnUrl;
@@ -479,7 +489,12 @@ namespace DV.Web.Controllers
         [AllowAnonymous]
         public async Task<IActionResult> Logout()
         {
+            var username = User.Identity?.Name ?? "Unknown";
             await HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+
+            // NIST AU-2: Log logout event
+            await _auditService.LogAuthenticationAsync(username, AuditActions.Logout, AuditResults.Success, "User logged out");
+
             return Redirect("/login-choice");
         }
 
