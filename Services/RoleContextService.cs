@@ -25,9 +25,9 @@
 // ============================================================================
 
 using DV.Shared.Security;
+using DV.Shared.Interfaces;
 using DV.Web.Services;
 using Microsoft.AspNetCore.Components.Authorization;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
 namespace DV.Web.Services;
@@ -45,7 +45,7 @@ public class RoleContextService
     private readonly ILogger<RoleContextService> _logger;
     private readonly UserService _userService;
     private readonly ProjectRoleService _projectRoleService;
-    private readonly SecurityDbContext _securityContext;
+    private readonly ISessionManagementService _sessionService;
     private readonly SemaphoreSlim _initLock = new(1, 1);
     
     private ApplicationRole? _currentRole;
@@ -60,14 +60,14 @@ public class RoleContextService
         ILogger<RoleContextService> logger,
         UserService userService,
         ProjectRoleService projectRoleService,
-        SecurityDbContext securityContext)
+        ISessionManagementService sessionService)
     {
         _authStateProvider = authStateProvider;
         _serviceProvider = serviceProvider;
         _logger = logger;
         _userService = userService;
         _projectRoleService = projectRoleService;
-        _securityContext = securityContext;
+        _sessionService = sessionService;
     }
 
     // ========================================================================
@@ -183,13 +183,10 @@ public class RoleContextService
             string? sessionRoleName = null;
             try
             {
-                // Query session by username (most reliable) rather than session key
-                var activeSession = await _securityContext.UserSessions
-                    .AsNoTracking()
-                    .Where(s => s.Username == _currentUsername && s.IsActive)
-                    .OrderByDescending(s => s.LastActivity)
-                    .FirstOrDefaultAsync();
-                
+                // Query session by username via the session management service
+                var sessions = await _sessionService.GetUserSessionsByUsernameAsync(_currentUsername!, activeOnly: true);
+                var activeSession = sessions.FirstOrDefault();
+
                 if (activeSession != null)
                 {
                     sessionRoleName = activeSession.CurrentRole;
@@ -374,7 +371,7 @@ public class RoleContextService
         try
         {
             using var scope = _serviceProvider.CreateScope();
-            var sessionService = scope.ServiceProvider.GetService<SessionManagementService>();
+            var sessionService = scope.ServiceProvider.GetService<ISessionManagementService>();
             if (sessionService != null)
             {
                 _logger.LogInformation($"RoleContextService: Updating session role to '{roleName}' for user '{_currentUsername}'");
@@ -384,7 +381,7 @@ public class RoleContextService
             }
             else
             {
-                _logger.LogWarning($"RoleContextService: SessionManagementService not available");
+                _logger.LogWarning($"RoleContextService: ISessionManagementService not available");
             }
         }
         catch (Exception ex)

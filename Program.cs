@@ -198,7 +198,7 @@ builder.Services.AddTransient<ProjectRoleService>();  // Transient to avoid DbCo
 // builder.Services.AddTransient<UserProjectAccessService>();
 builder.Services.AddScoped<AuditService>();
 builder.Services.AddScoped<ProjectSelectionState>();
-builder.Services.AddScoped<SessionManagementService>();
+builder.Services.AddScoped<ISessionManagementService, SessionManagementService>();
 builder.Services.AddTransient<ICredentialService, CredentialService>(); // NIST SP 800-53: Local credential management
 builder.Services.AddTransient<IAccessGroupService, AccessGroupService>(); // App-managed access groups
 builder.Services.AddScoped<NotificationApiService>();

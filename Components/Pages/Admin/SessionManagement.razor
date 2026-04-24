@@ -1,10 +1,10 @@
 @page "/admin/sessions"
-@using DV.Web.Services
+@using DV.Shared.Interfaces
 @using DV.Shared.Security
 @using DV.Shared.DTOs
 @using Microsoft.AspNetCore.Authorization
 @attribute [Authorize(Roles = "DV_Global_Admins")]
-@inject SessionManagementService SessionService
+@inject ISessionManagementService SessionService
 @inject NavigationManager Navigation
 @inject IJSRuntime JSRuntime
 @rendermode InteractiveServer
